@@ -2,6 +2,7 @@
 // 消费：唯一推进 signals.offset 的地方。打印新信号（每行一条 JSON），然后前移进度。
 // 只想看不想消费，用 tail，别调这个。
 import { readFileSync, writeFileSync, openSync, readSync, closeSync, fstatSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { paths, withLock } from "./common.mjs";
 
 export async function consume() {
@@ -36,6 +37,6 @@ export async function consume() {
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   for (const signal of await consume()) process.stdout.write(`${JSON.stringify(signal)}\n`);
 }

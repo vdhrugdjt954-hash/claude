@@ -47,6 +47,7 @@ if (existsSync(paths.oneshotLock)) {
 const child = spawn(process.execPath, [fileURLToPath(new URL("./oneshot.mjs", import.meta.url))], {
   detached: true,
   stdio: "ignore",
+  windowsHide: true,
   env: process.env,
 });
 child.unref();

@@ -3,7 +3,7 @@
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd); bridge=${BRIDGE_DIR:?set BRIDGE_DIR to the cloned galatea-garden-wake-bridge}
 export GARDEN_WAKE_DIR=$(mktemp -d); w=$GARDEN_WAKE_DIR; fifo=$w/fake.in; mkfifo "$fifo"
-export GARDEN_ONESHOT_COMMAND_JSON="[\"bash\",\"-c\",\"echo \\\"\$0\\\" >> $w/oneshot-prompts.txt; sleep 1\"]"
+export GARDEN_ONESHOT_COMMAND_JSON="[\"bash\",\"-c\",\"cat >> $w/oneshot-prompts.txt; echo >> $w/oneshot-prompts.txt; sleep 1\"]"
 fail=0; ok(){ echo "PASS $1"; }; bad(){ echo "FAIL $1"; fail=1; }
 node "$here/e2e/fake-garden.mjs" < "$fifo" > "$w/fake.log" 2>&1 & fake=$!; exec 3>"$fifo"
 sleep 0.5
@@ -13,7 +13,7 @@ GARDEN_INJECTOR_EXECUTABLE="$(command -v node)" GARDEN_INJECTOR_ARGS_JSON="[\"$h
 sleep 1; lines(){ wc -l < "$w/signals.jsonl" 2>/dev/null || echo 0; }
 
 echo "== 1. 主会话在场（哨兵在跑）：只写文件、不起值守、哨兵退出叫醒"
-"$here/sentinel.sh" > "$w/sentinel.out" & sn=$!; sleep 3
+node "$here/sentinel.mjs" > "$w/sentinel.out" & sn=$!; sleep 3
 echo "game_turn_required 轮到你了" >&3; sleep 2
 [ "$(lines)" = 1 ] && ok "signal appended" || bad "signal appended"
 kill -0 $sn 2>/dev/null && bad "sentinel exited" || ok "sentinel exited"

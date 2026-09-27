@@ -43,7 +43,11 @@ for (let round = 0; round < MAX_ROUNDS; round++) {
       ...signals.map((s) => `- [${s.reason}] ${s.message}`),
     ].join("\n");
     const [bin, ...args] = command;
-    const result = spawnSync(bin, [...args, prompt], {
+    // prompt 走 stdin，不进命令行：Windows 上 claude 是 .cmd，需要 shell，信号文案不能拼进去
+    const result = spawnSync(bin, args, {
+      input: prompt,
+      shell: process.platform === "win32",
+      windowsHide: true,
       encoding: "utf8",
       timeout: 10 * 60_000,
       cwd: process.env.GARDEN_ONESHOT_CWD || process.cwd(),
