@@ -114,6 +114,13 @@ function runTmux(args, { input, timeoutMs, tmuxBin = "tmux" } = {}) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 原生安装的 Claude Code 可执行文件是 ~/.local/share/claude/versions/<版本号>，
+// tmux 显示的进程名就是版本号，所以期望里有 claude 时也认 2.1.289 这种名字。
+function matchesExpected(current, expectCommands) {
+  if (expectCommands.includes(current)) return true;
+  return expectCommands.includes("claude") && /^\d+\.\d+\.\d+$/.test(current);
+}
+
 // Claude Code 的选择框会出现 "❯ 1. Yes" 这样的光标行，或 "Do you want to ..." 的确认问句。
 function hasOpenDialog(screen) {
   const tail = screen.split("\n").filter((l) => l.trim() !== "").slice(-25).join("\n");
@@ -137,7 +144,7 @@ async function injectWake({ target, expectCommands, timeoutMs, envelope, tmux = 
   } catch {
     throw missing;
   }
-  if (!expectCommands.includes(current)) {
+  if (!matchesExpected(current, expectCommands)) {
     throw new InjectorError(
       `tmux pane ${target} is running "${current}", expected one of ${expectCommands.join(", ")}`,
     );
@@ -195,6 +202,7 @@ export {
   buildPrompt,
   hasOpenDialog,
   injectWake,
+  matchesExpected,
   parseExpectCommands,
   parseTarget,
   parseTimeout,

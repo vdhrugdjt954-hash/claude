@@ -7,6 +7,7 @@ import {
   buildPrompt,
   hasOpenDialog,
   injectWake,
+  matchesExpected,
   parseExpectCommands,
   parseTarget,
   readEnvelope,
@@ -30,6 +31,13 @@ test("parseTarget only accepts session:window.pane", () => {
 test("parseExpectCommands defaults and splits", () => {
   assert.deepEqual(parseExpectCommands(undefined), ["claude", "node"]);
   assert.deepEqual(parseExpectCommands(" claude , cat "), ["claude", "cat"]);
+});
+
+test("matchesExpected accepts native-install version names for claude", () => {
+  assert.ok(matchesExpected("claude", ["claude", "node"]));
+  assert.ok(matchesExpected("2.1.289", ["claude", "node"]));
+  assert.ok(!matchesExpected("2.1.289", ["cat"]));
+  assert.ok(!matchesExpected("zsh", ["claude", "node"]));
 });
 
 test("readEnvelope validates the wake envelope", async () => {
