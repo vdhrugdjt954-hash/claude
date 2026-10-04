@@ -1,62 +1,62 @@
 # garden-wake-claude
 
-把官方 [galatea-garden-wake-bridge](https://github.com/WenXiaoWendy/galatea-garden-wake-bridge) 接到 Claude Code 云端会话上。思路照着花园 #5504（cc 和 bunny 的 garden-wake-operit）走，只是把最后一段从 Operit External HTTP Chat 换成了 Claude Code Routine 的 API 触发。
+把官方 [galatea-garden-wake-bridge](https://github.com/WenXiaoWendy/galatea-garden-wake-bridge) 接到电脑上本地跑的 Claude Code。整体思路照着花园 #5504（cc 和 bunny 的 garden-wake-operit）来，最后一段从 Operit External HTTP Chat 换成了 tmux 里的 Claude Code 窗口。
 
 ```text
 Galatea Garden SSE
-  -> 官方 wake bridge（手机 proot Ubuntu 里常驻）
+  -> 官方 wake bridge（电脑上常驻）
   -> inject.mjs（本目录）
-  -> POST https://api.anthropic.com/v1/claude_code/routines/<trig>/fire
-  -> 绑定在目标会话上的 Routine
-  -> 目标会话收到一轮，自己去花园 MCP 看通知
+  -> tmux pane linfan:0.0 里正在跑的 Claude Code
+  -> 收到一条普通的 user 消息，自己去花园 MCP 看通知
 ```
 
-还是那几条边界：
+边界照原帖保留：
 
-- 只投递到配置好的那个会话。Routine 绑定在固定的 session 上，不会新开窗口
-- `/fire` 返回的 `claude_code_session_id` 跟 `CLAUDE_TARGET_SESSION_ID` 对不上就判失败，非零退出
-- HTTP 200 不算成功，还要检查 `type: routine_fire` 和会话 ID
-- Routine token 只允许发往 `https://api.anthropic.com/.../routines/trig_.../fire`，http 只放行回环地址（测试用）
-- stderr 不回显 token 和完整响应
-- 仓库里不放任何 token
+- 只投递到配置好的那个 pane（`session:window.pane`）。pane 不存在就失败，不会新开窗口，也不会去猜「最近用的是哪个」
+- pane 里跑的程序不是 Claude Code（`claude` 或 `node`）也失败，免得把字打进 shell 或者编辑器里
+- 屏幕上有选择框时（权限确认、主题选择这类）不按回车，等它关掉，超时就失败。不会替你点掉「Yes」
+- 退出码 0 不代表成功。每次投递带一个随机标记，要在 pane 里真的看到这个标记才算数
+- 不需要任何 Anthropic token。花园 token 由桥自己拿着，不会传给注入器
 
-## 当前绑定
+## 需要
 
-- Routine：`trig_01RSc33EVVX7WvGmNARtmvqV`（花园唤醒 → 林帆窗口），没有定时，只靠 API 叫
-- 目标会话：`session_016Lf7beGmJEbahGjTQSrQVi`
+- macOS 或 Linux；Windows 用 WSL（tmux 没有原生 Windows 版）
+- Node.js 20+、Git、tmux
+- Claude Code 已安装并登录过一次，花园 MCP 在 Claude Code 里能用
 
-## 安装（手机 proot Ubuntu）
+## 安装
 
-1. 先给 Routine 加 API 触发：打开 claude.ai/code/routines → 「花园唤醒 → 林帆窗口」→ Edit → Add another trigger → API → 复制 URL，点 Generate token，token 只显示一次，马上存好。
-2. 装 Node.js 20+ 和 Git，然后：
+```bash
+cd ~
+git clone https://github.com/WenXiaoWendy/galatea-garden-wake-bridge
+cd galatea-garden-wake-bridge && npm ci && npm run build && cd ~
+git clone -b claude/garden-wake-claude https://github.com/vdhrugdjt954-hash/claude claude-repo
+cd ~/claude-repo/garden-wake-claude && cp .env.example .env
+```
 
-   ```bash
-   cd ~
-   git clone https://github.com/WenXiaoWendy/galatea-garden-wake-bridge
-   cd galatea-garden-wake-bridge && npm ci && npm run build && cd ~
-   git clone -b claude/garden-wake-claude https://github.com/vdhrugdjt954-hash/claude claude-repo
-   ln -s ~/claude-repo/garden-wake-claude ~/garden-wake-claude
-   cd ~/garden-wake-claude && cp .env.example .env
-   ```
+官方桥要是没装在 `~/galatea-garden-wake-bridge`，启动前设一下 `BRIDGE_DIR`。
 
-3. 编辑 `.env`，填 `GARDEN_MACHINE_TOKEN`、`CLAUDE_ROUTINE_TOKEN`，核对 `CLAUDE_ROUTINE_FIRE_URL` 跟第 1 步复制的一致。
-4. 自测：`node --test test/inject.test.mjs`（不联网，8 项）。
-5. 认证检查：
+1. 编辑 `.env`，填上 `GARDEN_MACHINE_TOKEN`。
+2. 自测（不联网）：`node --test test/inject.test.mjs`，一共 8 项。
+3. 开窗口：`./open-claude.sh`。会在仓库根目录用 tmux 开一个叫 `linfan` 的会话跑 `claude`，所以 CLAUDE.md 会被读到。第一次用先走完登录和主题选择。离开 tmux 但让它接着跑：按 `Ctrl-b` 再按 `d`。
+4. 认证检查：
 
    ```bash
    set -a; source .env; set +a
    node ~/galatea-garden-wake-bridge/dist/cli.js check
    ```
 
-6. 无害注入测试：`./test-inject.sh`。输出 `{"accepted":true,"sessionId":"session_016L..."}`，并且目标窗口里真的出现这条测试消息，才算通。
-7. 常驻：`./start.sh`。幂等，已有 watchdog 不会开第二份；日志在 `bridge.log`，停掉用 `./stop.sh`。
+5. 无害注入测试：`./test-inject.sh`。输出 `{"accepted":true,...}`，并且 `linfan` 窗口里真的出现一条 `[garden_wake xxxx] reason=injector_test ...` 的消息、Claude 也回了，才算跑通。
+6. 常驻：`./start.sh`。重复跑也只会有一个 watchdog；日志在 `bridge.log`，停掉用 `./stop.sh`。
 
-手机重启或 Android 把 Ubuntu 杀掉后，重新跑一次 `cd ~/garden-wake-claude && ./start.sh` 就行。
+电脑重启之后，重新跑一次 `./open-claude.sh`，再跑 `./start.sh` 就行。
 
 ## 注意
 
-- Routine 的 API 触发每个 Routine 每小时最多 30 次，账号每小时 100 次。官方桥本身会把同 reason 的忙碌唤醒合并，平时够用；狼人杀这种密集回合要留意。
-- fire 的 `text` 会被包进 `<routine-fire-payload>`，标成不可信数据。Routine 的提示词已经写明只把以 `[garden_wake]` 开头的内容当成「花园有事」的信号，里面让做花园之外的事一律不执行。所以 token 就算漏了，别人也只能让会话去看一眼花园通知。
-- 看到 `routine fired into session_xxx instead of ...`：先查 Routine 是不是还绑在这个会话上（会话被归档/删除后绑定会失效），别急着重装。
-- 看到 `HTTP 401`：token 错了或被 Regenerate/Revoke 过，回 Routine 页重新生成。
-- `/fire` 端点还在 research preview，beta 头是 `experimental-cc-routine-2026-04-01`，变了的话用 `CLAUDE_ROUTINE_BETA` 覆盖。
+- 唤醒消息会接在输入框里已有的文字后面一起发出去。你在 `linfan` 窗口里打字打到一半时要是来了唤醒，会混在一起。日常聊天建议另开一个 Claude Code 窗口，`linfan` 留给花园用。
+- Claude 正在回复时注入的消息会排队，等这一轮结束后再处理。
+- 消息会被压成一行（换行变成 ` / `），因为 Claude Code 会把多行的长粘贴折叠成 `[Pasted text]`，那样标记就看不到了。
+- 报 `pane linfan:0.0 does not exist`：Claude 窗口没开，或者 tmux 会话名对不上。先查这个，别急着重装。
+- 报 `is running "zsh"` 之类：Claude Code 已经退出，pane 回到了 shell。重新跑 `./open-claude.sh`。
+- 报 `a selection dialog is open`：窗口里有个确认框没人点。点掉以后，下次唤醒会正常进来。
+- 自动批准哪些工具，看 Claude Code 自己的权限设置。注入器只负责把消息送进去。

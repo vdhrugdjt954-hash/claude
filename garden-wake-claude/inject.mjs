@@ -1,21 +1,19 @@
 #!/usr/bin/env node
 
-// Galatea Garden wake bridge -> Claude Code Routine injector.
-// 从 stdin 读花园唤醒信封，POST 到绑定了目标会话的 Routine /fire 端点，
-// 只有返回的 session_id 与配置的目标会话一致才算投递成功。
+// Galatea Garden wake bridge -> 本机 tmux 里的 Claude Code 会话。
+// 从 stdin 读花园唤醒信封，粘贴进配置好的 tmux pane 并回车；
+// 只有在 pane 里看到这次投递的标记才算成功。pane 不存在就失败，不新开。
 
-import { isIP } from "node:net";
+import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 const MAX_INPUT_BYTES = 64 * 1024;
-const MAX_TEXT_BYTES = 60 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
-const ANTHROPIC_HOST = "api.anthropic.com";
-const DEFAULT_BETA = "experimental-cc-routine-2026-04-01";
-const ANTHROPIC_VERSION = "2023-06-01";
-const FIRE_PATH = /^\/v1\/claude_code\/routines\/trig_[A-Za-z0-9]+\/fire$/;
-const SESSION_ID = /^session_[A-Za-z0-9]+$/;
+const DEFAULT_EXPECT_COMMANDS = ["claude", "node"];
+const SUBMIT_DELAY_MS = 300;
+const POLL_INTERVAL_MS = 250;
 
 class InjectorError extends Error {
   constructor(message) {
@@ -42,50 +40,20 @@ function parseTimeout(value) {
   return parsed;
 }
 
-function isLoopback(hostname) {
-  if (hostname === "localhost") return true;
-  const bare = hostname.replace(/^\[|\]$/g, "");
-  const addressType = isIP(bare);
-  if (addressType === 4) return bare.startsWith("127.");
-  if (addressType === 6) return bare === "::1";
-  return false;
+// tmux 目标写死成 session:window.pane，不接受 "最近的" 之类的模糊目标。
+function parseTarget(value) {
+  const target = requireString(value, "CLAUDE_TMUX_TARGET");
+  if (!/^[A-Za-z0-9_.-]+:[0-9]+\.[0-9]+$/.test(target)) {
+    throw new InjectorError("CLAUDE_TMUX_TARGET must look like session:window.pane, e.g. linfan:0.0");
+  }
+  return target;
 }
 
-// Routine token 只允许发往 api.anthropic.com 的 /fire 路径；
-// http 仅放行回环地址，留给本地测试。
-function parseFireUrl(value) {
-  let url;
-  try {
-    url = new URL(requireString(value, "CLAUDE_ROUTINE_FIRE_URL"));
-  } catch (error) {
-    if (error instanceof InjectorError) throw error;
-    throw new InjectorError("CLAUDE_ROUTINE_FIRE_URL must be a valid URL");
-  }
-  if (url.username || url.password || url.search || url.hash) {
-    throw new InjectorError(
-      "CLAUDE_ROUTINE_FIRE_URL must not contain credentials, a query or a fragment",
-    );
-  }
-  if (url.protocol === "http:" && isLoopback(url.hostname)) return url;
-  if (url.protocol !== "https:" || url.hostname !== ANTHROPIC_HOST) {
-    throw new InjectorError(
-      `CLAUDE_ROUTINE_FIRE_URL must be https://${ANTHROPIC_HOST}/... (http only for loopback)`,
-    );
-  }
-  if (!FIRE_PATH.test(url.pathname)) {
-    throw new InjectorError(
-      "CLAUDE_ROUTINE_FIRE_URL must look like /v1/claude_code/routines/trig_.../fire",
-    );
-  }
-  return url;
-}
-
-function parseSessionId(value) {
-  const id = requireString(value, "CLAUDE_TARGET_SESSION_ID");
-  if (!SESSION_ID.test(id)) {
-    throw new InjectorError("CLAUDE_TARGET_SESSION_ID must look like session_...");
-  }
-  return id;
+function parseExpectCommands(value) {
+  if (value === undefined || value.trim() === "") return DEFAULT_EXPECT_COMMANDS;
+  const list = value.split(",").map((s) => s.trim()).filter(Boolean);
+  if (list.length === 0) throw new InjectorError("CLAUDE_TMUX_EXPECT_COMMAND is empty");
+  return list;
 }
 
 async function readEnvelope(input) {
@@ -118,96 +86,98 @@ async function readEnvelope(input) {
   };
 }
 
-// 服务端 message 原样带上，前面加一行固定标记，方便会话里的 Routine 提示词认出这是花园唤醒。
-function buildFireText({ reason, message }) {
-  const text = `[garden_wake] reason=${reason}\n${message}`;
-  if (Buffer.byteLength(text, "utf8") > MAX_TEXT_BYTES) {
-    throw new InjectorError(`fire text exceeds ${MAX_TEXT_BYTES} bytes`);
-  }
-  return text;
+// 服务端 message 原样带上，前面是带随机 ID 的标记，用来确认这一次确实进了 pane。
+// 压成一行：Claude Code 会把多行长粘贴折叠成 [Pasted text]，标记就看不到了。
+function buildPrompt({ reason, message }, deliveryId) {
+  const flat = message.replace(/\s*\r?\n\s*/g, " / ").trim();
+  return `[garden_wake ${deliveryId}] reason=${reason} | ${flat}`;
 }
 
-async function fireRoutine({ url, token, beta, timeoutMs, text, fetchImpl = fetch }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
-  try {
-    response = await fetchImpl(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "anthropic-beta": beta,
-        "anthropic-version": ANTHROPIC_VERSION,
-        "Content-Type": "application/json",
+function runTmux(args, { input, timeoutMs, tmuxBin = "tmux" } = {}) {
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      tmuxBin,
+      args,
+      { timeout: timeoutMs, maxBuffer: 1024 * 1024, encoding: "utf8" },
+      (error, stdout, stderr) => {
+        if (error) {
+          const detail = (stderr || error.message).trim().split("\n")[0];
+          reject(new InjectorError(`tmux ${args[0]} failed: ${detail}`));
+          return;
+        }
+        resolve(stdout);
       },
-      body: JSON.stringify({ text }),
-      redirect: "error",
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new InjectorError("routine fire timed out");
-    }
-    throw new InjectorError(`routine fire request failed: ${error?.message ?? error}`);
-  } finally {
-    clearTimeout(timer);
-  }
-
-  const raw = await response.text();
-  if (!response.ok) {
-    // 只报状态码和服务端错误类型，不回显完整响应，避免把敏感内容打进桥日志。
-    let kind = "";
-    try {
-      kind = JSON.parse(raw)?.error?.type ?? "";
-    } catch {}
-    throw new InjectorError(
-      `routine fire returned HTTP ${response.status}${kind ? ` (${kind})` : ""}`,
     );
-  }
+    if (input !== undefined) child.stdin.end(input);
+  });
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Claude Code 的选择框会出现 "❯ 1. Yes" 这样的光标行，或 "Do you want to ..." 的确认问句。
+function hasOpenDialog(screen) {
+  const tail = screen.split("\n").filter((l) => l.trim() !== "").slice(-25).join("\n");
+  return /^\s*❯\s*(\d+\.|✔)/m.test(tail) || /Do you want to /.test(tail);
+}
+
+async function injectWake({ target, expectCommands, timeoutMs, envelope, tmux = runTmux }) {
+  const deadline = Date.now() + timeoutMs;
+  const opts = () => ({ timeoutMs: Math.max(1_000, deadline - Date.now()) });
+
+  // 1. 目标 pane 必须已经存在，并且跑的是 Claude Code。
+  // display-message 对不存在的目标有时不报错只回空，所以先 has-session，再要求 pane 信息非空。
+  const missing = new InjectorError(`tmux pane ${target} does not exist; start Claude Code there first`);
+  let current;
   try {
-    return JSON.parse(raw);
+    await tmux(["has-session", "-t", target.split(":")[0]], opts());
+    const info = (await tmux(["display-message", "-p", "-t", target, "#{pane_id} #{pane_current_command}"], opts())).trim();
+    const [paneId, ...rest] = info.split(" ");
+    if (!paneId?.startsWith("%")) throw missing;
+    current = rest.join(" ");
   } catch {
-    throw new InjectorError("routine fire returned non-JSON body");
+    throw missing;
   }
-}
-
-// HTTP 200 不算成功：必须是 routine_fire，且落在配置的那个会话里。
-function assertDelivered(result, targetSessionId) {
-  if (result?.type !== "routine_fire") {
-    throw new InjectorError(`unexpected fire response type ${String(result?.type)}`);
-  }
-  const sessionId = result.claude_code_session_id;
-  if (sessionId !== targetSessionId) {
+  if (!expectCommands.includes(current)) {
     throw new InjectorError(
-      `routine fired into ${String(sessionId)} instead of ${targetSessionId}; ` +
-        "check that the routine is bound to the target session",
+      `tmux pane ${target} is running "${current}", expected one of ${expectCommands.join(", ")}`,
     );
   }
-  return sessionId;
-}
 
-async function injectWake({ url, token, beta, timeoutMs, targetSessionId, envelope, fetchImpl }) {
-  const text = buildFireText(envelope);
-  const result = await fireRoutine({ url, token, beta, timeoutMs, text, fetchImpl });
-  return assertDelivered(result, targetSessionId);
+  // 2. 屏幕上有选择框（权限确认、主题选择等）时不能回车，否则会替她点掉选项。等它消失，超时就失败。
+  for (;;) {
+    const screen = await tmux(["capture-pane", "-p", "-t", target], opts());
+    if (!hasOpenDialog(screen)) break;
+    if (Date.now() + POLL_INTERVAL_MS >= deadline) {
+      throw new InjectorError(`a selection dialog is open in ${target}; not pressing Enter`);
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  // 3. 用 bracketed paste 贴进去，再单独回车提交。
+  const deliveryId = randomBytes(4).toString("hex");
+  const marker = `[garden_wake ${deliveryId}]`;
+  const buffer = `garden-wake-${deliveryId}`;
+  await tmux(["load-buffer", "-b", buffer, "-"], { ...opts(), input: buildPrompt(envelope, deliveryId) });
+  await tmux(["paste-buffer", "-p", "-d", "-b", buffer, "-t", target], opts());
+  await sleep(SUBMIT_DELAY_MS);
+  await tmux(["send-keys", "-t", target, "Enter"], opts());
+
+  // 4. 在 pane 里看到这次的标记才算投递成功。
+  while (Date.now() < deadline) {
+    const screen = await tmux(["capture-pane", "-p", "-J", "-S", "-200", "-t", target], opts());
+    if (screen.includes(marker)) return deliveryId;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  throw new InjectorError(`marker ${marker} never showed up in ${target}`);
 }
 
 async function main() {
   const envelope = await readEnvelope(process.stdin);
-  const url = parseFireUrl(process.env.CLAUDE_ROUTINE_FIRE_URL);
-  const token = requireString(process.env.CLAUDE_ROUTINE_TOKEN, "CLAUDE_ROUTINE_TOKEN");
-  const targetSessionId = parseSessionId(process.env.CLAUDE_TARGET_SESSION_ID);
+  const target = parseTarget(process.env.CLAUDE_TMUX_TARGET);
+  const expectCommands = parseExpectCommands(process.env.CLAUDE_TMUX_EXPECT_COMMAND);
   const timeoutMs = parseTimeout(process.env.CLAUDE_INJECTOR_TIMEOUT_MS);
-  const beta = process.env.CLAUDE_ROUTINE_BETA?.trim() || DEFAULT_BETA;
-  const sessionId = await injectWake({
-    url,
-    token,
-    beta,
-    timeoutMs,
-    targetSessionId,
-    envelope,
-  });
-  process.stdout.write(`${JSON.stringify({ accepted: true, sessionId })}\n`);
+  const deliveryId = await injectWake({ target, expectCommands, timeoutMs, envelope });
+  process.stdout.write(`${JSON.stringify({ accepted: true, target, deliveryId })}\n`);
 }
 
 const isMain =
@@ -215,18 +185,19 @@ const isMain =
 if (isMain) {
   main().catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`Claude routine injector failed: ${message}\n`);
+    process.stderr.write(`Claude tmux injector failed: ${message}\n`);
     process.exitCode = 1;
   });
 }
 
 export {
   InjectorError,
-  assertDelivered,
-  buildFireText,
+  buildPrompt,
+  hasOpenDialog,
   injectWake,
-  parseFireUrl,
-  parseSessionId,
+  parseExpectCommands,
+  parseTarget,
   parseTimeout,
   readEnvelope,
+  runTmux,
 };

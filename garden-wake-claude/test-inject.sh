@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 无害注入测试：往目标窗口发一条测试唤醒，确认进的是对的会话。
+# 无害注入测试：往目标 pane 发一条测试唤醒，确认进的是对的窗口。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 set -a; source "$HERE/.env"; set +a

@@ -1,52 +1,35 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { createServer } from "node:http";
+import { execFileSync, spawn } from "node:child_process";
 import { Readable } from "node:stream";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  assertDelivered,
-  buildFireText,
+  buildPrompt,
+  hasOpenDialog,
   injectWake,
-  parseFireUrl,
-  parseSessionId,
+  parseExpectCommands,
+  parseTarget,
   readEnvelope,
 } from "../inject.mjs";
 
 const SCRIPT = fileURLToPath(new URL("../inject.mjs", import.meta.url));
-const SESSION = "session_016Lf7beGmJEbahGjTQSrQVi";
 const ENVELOPE = {
   version: 1,
   type: "garden_wake",
   reason: "forum_notification_available",
-  message: "你有新的帖子通知。",
+  message: "你有新的帖子通知。\n第二行",
 };
 
-test("parseFireUrl accepts the official fire endpoint", () => {
-  const url = parseFireUrl(
-    "https://api.anthropic.com/v1/claude_code/routines/trig_01ABCdef/fire",
-  );
-  assert.equal(url.hostname, "api.anthropic.com");
-});
-
-test("parseFireUrl rejects other hosts, plain http and wrong paths", () => {
-  for (const bad of [
-    "https://evil.example/v1/claude_code/routines/trig_01ABC/fire",
-    "http://api.anthropic.com/v1/claude_code/routines/trig_01ABC/fire",
-    "https://api.anthropic.com/v1/messages",
-    "https://u:p@api.anthropic.com/v1/claude_code/routines/trig_01ABC/fire",
-    "https://api.anthropic.com/v1/claude_code/routines/trig_01ABC/fire?x=1",
-    "not a url",
-  ]) {
-    assert.throws(() => parseFireUrl(bad), /CLAUDE_ROUTINE_FIRE_URL/, bad);
+test("parseTarget only accepts session:window.pane", () => {
+  assert.equal(parseTarget(" linfan:0.0 "), "linfan:0.0");
+  for (const bad of ["linfan", "linfan:0", ":0.0", "a b:0.0", "x;rm:0.0", undefined]) {
+    assert.throws(() => parseTarget(bad), /CLAUDE_TMUX_TARGET/, String(bad));
   }
-  assert.ok(parseFireUrl("http://127.0.0.1:9/anything"));
 });
 
-test("parseSessionId requires a session_ id", () => {
-  assert.equal(parseSessionId(` ${SESSION} `), SESSION);
-  assert.throws(() => parseSessionId("abc"), /session_/);
-  assert.throws(() => parseSessionId(undefined), /CLAUDE_TARGET_SESSION_ID/);
+test("parseExpectCommands defaults and splits", () => {
+  assert.deepEqual(parseExpectCommands(undefined), ["claude", "node"]);
+  assert.deepEqual(parseExpectCommands(" claude , cat "), ["claude", "cat"]);
 });
 
 test("readEnvelope validates the wake envelope", async () => {
@@ -63,60 +46,61 @@ test("readEnvelope validates the wake envelope", async () => {
   await assert.rejects(readEnvelope(Readable.from(["{"])), /JSON/);
 });
 
-test("buildFireText keeps the server message verbatim", () => {
-  assert.equal(
-    buildFireText({ reason: "r", message: "第一行\n第二行" }),
-    "[garden_wake] reason=r\n第一行\n第二行",
-  );
+test("buildPrompt keeps the server message verbatim", () => {
+  assert.equal(buildPrompt({ reason: "r", message: "a\n b\r\nc" }, "ab12"), "[garden_wake ab12] reason=r | a / b / c");
 });
 
-test("assertDelivered requires the configured session", () => {
-  const ok = { type: "routine_fire", claude_code_session_id: SESSION };
-  assert.equal(assertDelivered(ok, SESSION), SESSION);
-  assert.throws(
-    () => assertDelivered({ ...ok, claude_code_session_id: "session_other" }, SESSION),
-    /instead of/,
-  );
-  assert.throws(() => assertDelivered({}, SESSION), /response type/);
+test("hasOpenDialog spots permission and picker prompts", () => {
+  assert.ok(hasOpenDialog("Bash command\n Do you want to proceed?\n ❯ 1. Yes\n   2. No"));
+  assert.ok(hasOpenDialog(" Choose the text style\n ❯ ✔ Dark mode\n   Light mode"));
+  assert.ok(!hasOpenDialog("> 帮我看看花园\n\n────\n❯ \n  ? for shortcuts"));
 });
 
-test("injectWake sends headers and body, surfaces HTTP errors", async () => {
-  let seen;
-  const fetchImpl = async (url, init) => {
-    seen = { url: String(url), init };
-    return new Response(
-      JSON.stringify({ type: "routine_fire", claude_code_session_id: SESSION }),
-      { status: 200 },
-    );
+test("injectWake does not press Enter while a dialog is open", async () => {
+  const calls = [];
+  const tmux = async (args) => {
+    calls.push(args[0]);
+    if (args[0] === "display-message") return "%1 claude\n";
+    if (args[0] === "capture-pane") return "Do you want to proceed?\n ❯ 1. Yes\n";
+    return "";
   };
-  const args = {
-    url: new URL("https://api.anthropic.com/v1/claude_code/routines/trig_01A/fire"),
-    token: "tok",
-    beta: "beta-x",
-    timeoutMs: 1000,
-    targetSessionId: SESSION,
-    envelope: { reason: "r", message: "m" },
-    fetchImpl,
-  };
-  assert.equal(await injectWake(args), SESSION);
-  assert.equal(seen.init.headers.Authorization, "Bearer tok");
-  assert.equal(seen.init.headers["anthropic-beta"], "beta-x");
-  assert.deepEqual(JSON.parse(seen.init.body), { text: "[garden_wake] reason=r\nm" });
-
-  const failing = async () =>
-    new Response(JSON.stringify({ error: { type: "authentication_error" } }), {
-      status: 401,
-    });
   await assert.rejects(
-    injectWake({ ...args, fetchImpl: failing }),
-    /HTTP 401 \(authentication_error\)/,
+    injectWake({ target: "x:0.0", expectCommands: ["claude"], timeoutMs: 1000, envelope: { reason: "r", message: "m" }, tmux }),
+    /dialog is open/,
   );
+  assert.ok(!calls.includes("send-keys") && !calls.includes("paste-buffer"));
 });
+
+test("injectWake refuses a missing pane or the wrong program", async () => {
+  const envelope = { reason: "r", message: "m" };
+  const missing = async () => {
+    throw new Error("can't find pane");
+  };
+  await assert.rejects(
+    injectWake({ target: "x:0.0", expectCommands: ["claude"], timeoutMs: 1000, envelope, tmux: missing }),
+    /does not exist/,
+  );
+
+  const calls = [];
+  const wrong = async (args) => {
+    calls.push(args[0]);
+    return args[0] === "display-message" ? "%3 bash\n" : "";
+  };
+  await assert.rejects(
+    injectWake({ target: "x:0.0", expectCommands: ["claude"], timeoutMs: 1000, envelope, tmux: wrong }),
+    /running "bash"/,
+  );
+  assert.deepEqual(calls, ["has-session", "display-message"]);
+});
+
+function tmux(...args) {
+  return execFileSync("tmux", args, { encoding: "utf8" });
+}
 
 function runScript(env, input) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [SCRIPT], {
-      env: { PATH: process.env.PATH, ...env },
+      env: { PATH: process.env.PATH, TMUX_TMPDIR: process.env.TMUX_TMPDIR, ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -128,41 +112,37 @@ function runScript(env, input) {
   });
 }
 
-test("end to end against a loopback fake fire endpoint", async () => {
-  const requests = [];
-  const server = createServer((req, res) => {
-    let body = "";
-    req.on("data", (d) => (body += d));
-    req.on("end", () => {
-      requests.push({ headers: req.headers, body: JSON.parse(body) });
-      res.setHeader("content-type", "application/json");
-      res.end(
-        JSON.stringify({ type: "routine_fire", claude_code_session_id: SESSION }),
-      );
-    });
-  });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  const { port } = server.address();
+test("end to end against a real tmux pane", async () => {
+  const session = `gwtest${process.pid}`;
+  tmux("new-session", "-d", "-s", session, "-x", "200", "-y", "50", "cat");
   try {
     const env = {
-      CLAUDE_ROUTINE_FIRE_URL: `http://127.0.0.1:${port}/fire`,
-      CLAUDE_ROUTINE_TOKEN: "secret-token",
-      CLAUDE_TARGET_SESSION_ID: SESSION,
+      CLAUDE_TMUX_TARGET: `${session}:0.0`,
+      CLAUDE_TMUX_EXPECT_COMMAND: "cat",
+      CLAUDE_INJECTOR_TIMEOUT_MS: "5000",
     };
     const ok = await runScript(env, JSON.stringify(ENVELOPE));
     assert.equal(ok.code, 0, ok.stderr);
-    assert.deepEqual(JSON.parse(ok.stdout), { accepted: true, sessionId: SESSION });
-    assert.equal(requests[0].headers.authorization, "Bearer secret-token");
-    assert.match(requests[0].body.text, /^\[garden_wake\] reason=forum_notification_available\n/);
+    const { deliveryId } = JSON.parse(ok.stdout);
+    const screen = tmux("capture-pane", "-p", "-t", `${session}:0.0`);
+    assert.match(screen, new RegExp(`\\[garden_wake ${deliveryId}\\] reason=forum_notification_available`));
+    assert.match(screen, /第二行/);
 
-    const wrong = await runScript(
-      { ...env, CLAUDE_TARGET_SESSION_ID: "session_someoneElse" },
+    const wrongProgram = await runScript(
+      { ...env, CLAUDE_TMUX_EXPECT_COMMAND: "claude" },
       JSON.stringify(ENVELOPE),
     );
-    assert.equal(wrong.code, 1);
-    assert.match(wrong.stderr, /instead of session_someoneElse/);
-    assert.doesNotMatch(wrong.stderr, /secret-token/);
+    assert.equal(wrongProgram.code, 1);
+    assert.match(wrongProgram.stderr, /running "cat"/);
+
+    const noPane = await runScript(
+      { ...env, CLAUDE_TMUX_TARGET: "nosuchsession:0.0" },
+      JSON.stringify(ENVELOPE),
+    );
+    assert.equal(noPane.code, 1);
+    assert.match(noPane.stderr, /does not exist/);
+    assert.throws(() => tmux("has-session", "-t", "nosuchsession"));
   } finally {
-    server.close();
+    tmux("kill-session", "-t", session);
   }
 });
