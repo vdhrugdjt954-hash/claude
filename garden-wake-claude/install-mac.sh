@@ -13,7 +13,11 @@ major="$(node -p 'process.versions.node.split(".")[0]')"
 [ "$major" -ge 20 ] || { echo "Node $major is too old, need 20+ (brew upgrade node)" >&2; exit 1; }
 command -v claude >/dev/null || echo "warning: claude not found; install Claude Code: curl -fsSL https://claude.ai/install.sh | bash"
 
-if [ ! -d "$BRIDGE_DIR/.git" ]; then
+if [ -d "$BRIDGE_DIR" ] && [ ! -f "$BRIDGE_DIR/package.json" ]; then
+  echo "moving unrelated $BRIDGE_DIR aside to $BRIDGE_DIR.old.$$"
+  mv "$BRIDGE_DIR" "$BRIDGE_DIR.old.$$"
+fi
+if [ ! -d "$BRIDGE_DIR" ]; then
   git clone https://github.com/WenXiaoWendy/galatea-garden-wake-bridge "$BRIDGE_DIR"
 fi
 (cd "$BRIDGE_DIR" && npm ci && npm run build)
