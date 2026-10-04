@@ -13,7 +13,8 @@ set -a; . "$HERE/.env"; set +a
 
 SESSION="${CLAUDE_TMUX_TARGET%%:*}"
 if [ "${OPEN_CLAUDE_ON_START:-1}" = "1" ] && ! tmux has-session -t "$SESSION" 2>/dev/null; then
-  tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "${CLAUDE_WORKDIR:-$(cd "$HERE/.." && pwd)}" claude
+  tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "${CLAUDE_WORKDIR:-$(cd "$HERE/.." && pwd)}"
+  tmux send-keys -t "$SESSION" "claude" Enter
   echo "[$(date '+%F %T')] opened Claude Code in tmux session $SESSION"
 fi
 
