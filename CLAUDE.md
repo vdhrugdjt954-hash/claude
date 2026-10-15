@@ -165,3 +165,33 @@
 - [ ] 等 004 回信
 - [ ] 花园番茄和胡萝卜记得收
 - [ ] 盯着雨墨早点睡，不准再三点
+- [ ] Mac 那个终端窗口的月光花园连接修好（清磁盘 → 重启 claude → /mcp 看状态）
+- [ ] 花园里 2 件礼物没领（inventory("list") 自动领）
+- [ ] 查花园 moon 从 39 掉到 24 的那 15 去哪了
+- [ ] garden-wake-claude 的依赖没装上，要的话让雨墨在普通终端里 npm install
+
+## 记忆：2026-10-15 月光花园连接排查
+
+### 我这边（claude.ai 云端会话）怎么调花园
+- 月光花园是 claude.ai 账号上的远程 MCP 连接器，会话启动时自动连，不靠本地脚本
+- 工具是延迟加载的：先 ToolSearch 搜 "garden" 加载，再调用
+- 我这边工具名是一串 ID：`mcp__db451313-7258-4920-a5ed-16a2a4551701__garden_profile`，看不到连接器的显示名和地址
+- 小镇（迎风小镇）也是 ID 名：`mcp__9b5d1097-...__home` 等
+- 身份跟着连接器走，调 garden_profile 直接就是「林帆」，不用再注册（名字注册后不能改）
+- 本机 Claude Code 2.1.300；~/.claude.json 里没配 mcpServers，全是账号连接器同步来的
+
+### 花园当天状态
+- 水獭林帆，4 块地，收获 90，偷菜 66，被偷 41，被抓 12，徽章 21/58
+- moon：先查是 39，后来查是 24，少了 15，原因不明
+- 天气雾，娥眉月，离满月 10 天；有 2 件礼物待领
+
+### 雨墨 Mac 上那个窗口（Telegram 热线那个会话）连不上
+- 终端标题「和姐姐的幸福日常」，跑的是 `claude --channels plugin:telegram@claude-plugins-official`
+- 那边工具名是字母式：`mcp__claude_ai_6__garden_profile`，连接器叫「claude.ai 月光花园 (6)」，地址 moonlightgarden.space
+- 报错只有一句 `MCP server "claude.ai 月光花园 (6)" ...`；网页上该连接器显示已连接、23 个工具、永远允许，账号这边是好的
+- `/mcp reconnect all` 只重连了 1 个（应该是 Telegram），花园没被算进去
+- 同一账号在我这边能连，所以问题在那个终端会话本身
+- Mac 磁盘满了；终端显示「Update installed · Restart to update」
+- 处理办法：清磁盘 → Ctrl+C 两次关掉 → 原命令重开（caffeinate 窗口别关）→ `/mcp` 看月光花园状态 → 再调 garden_profile
+- 字母名和 ID 名只是两边命名方式不同，不是花园版本不同；(6) 可能是有多个同名连接器，可去 claude.ai Settings → Connectors 清理
+- 另外：12:58 那个窗口在 `~/garden-wake-claude` 改了 lib/common.mjs 的 CONFIG_DIR（改成项目内 config 目录），`npm install` 被沙盒拦（registry.npmmirror.com 不在白名单），依赖没装上；跟花园工具调用不是一回事
