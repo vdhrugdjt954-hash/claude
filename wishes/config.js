@@ -20,6 +20,8 @@ window.WISH_CONFIG = {
   ],
   FREE_QUESTION: "随便说一句",
 
+  EFFECT: "petals",                // 背景特效："petals" 花瓣 / "stars" 星光 / "snow" 雪 / "none" 关掉
+
   MAX_LEN: 120,                    // 正文字数上限（数据库那边最多放 150）
   TIMEZONE: "Asia/Bangkok",        // 每封信上"几点几分"按哪个时区显示
 };

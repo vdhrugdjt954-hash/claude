@@ -11,7 +11,7 @@
 | `admin.html` | 你自己用：写第一封、藏信删信、切换要不要先审、导出备份 |
 | `config.js` | **只改这个**：Supabase 地址和 key、标题、问题、时区 |
 | `setup.sql` | 在 Supabase 里跑一次，把表和规则建好 |
-| `api.js` `style.css` | 两个页面共用的，不用动 |
+| `api.js` `style.css` `effects.js` | 两个页面共用的和特效，不用动 |
 
 ## 怎么上线（大概 15 分钟）
 

@@ -58,7 +58,7 @@ body {
   line-height: 1.75;
   -webkit-text-size-adjust: 100%;
 }
-main { max-width: 600px; margin: 0 auto; padding: 40px 16px 72px; }
+main { position: relative; z-index: 1; max-width: 600px; margin: 0 auto; padding: 40px 16px 72px; }
 
 /* ---------- 头部 ---------- */
 .badge {
@@ -221,6 +221,16 @@ button.ghost { background: transparent; color: var(--accent); border: 1px solid 
   border: 1px solid currentColor; border-radius: 99px; padding: 0 8px; margin: 0 0 8px;
 }
 .letter.new { animation: rise .5s ease both, glow 2.4s ease .5s; }
+h1 {
+  background: linear-gradient(100deg, var(--ink) 30%, var(--accent) 50%, var(--ink) 70%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shine 6s ease-in-out infinite;
+}
+.flourish { animation: breathe 3.2s ease-in-out infinite; }
+.avatar { transition: transform .3s; }
+.letter:hover .avatar { transform: rotate(-12deg) scale(1.08); }
 .letter-q { font-size: 12px; color: var(--muted); margin: 0 0 6px; }
 .letter-text {
   font-family: var(--serif);
@@ -245,11 +255,13 @@ button.ghost { background: transparent; color: var(--accent); border: 1px solid 
 .foot { text-align: center; color: var(--muted); font-size: 12px; margin: 40px 0 0; opacity: .8; }
 .hidden { display: none !important; }
 
+@keyframes shine { 0%, 100% { background-position: 100% 0; } 50% { background-position: 0 0; } }
+@keyframes breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
 @keyframes rise { from { opacity: 0; translate: 0 10px; } to { opacity: 1; translate: 0 0; } }
 @keyframes glow {
   0%, 100% { box-shadow: var(--shadow); }
   30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent), var(--shadow); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .letter, .letter.new { animation: none; }
+  .letter, .letter.new, h1, .flourish { animation: none; }
 }

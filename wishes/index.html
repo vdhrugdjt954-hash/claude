@@ -43,6 +43,7 @@
 
 <script src="config.js"></script>
 <script src="api.js"></script>
+<script src="effects.js"></script>
 <script>
 (function () {
   const C = window.WISH_CONFIG, api = window.WishAPI;
@@ -116,10 +117,11 @@
       body.value = "";
       updateCount();
       msg.className = "msg ok";
+      if (window.WishFX) WishFX.celebrate(send);
       if (r.status === "approved") {
         msg.textContent = "留下了 · " + api.fmtTime(r.created_at);
         await load(true);
-        $("listTitle").scrollIntoView({ behavior: "smooth", block: "start" });
+        setTimeout(() => $("listTitle").scrollIntoView({ behavior: "smooth", block: "start" }), 900);
       } else {
         msg.textContent = "收到了 · " + api.fmtTime(r.created_at) + "，过一遍之后会出现在下面";
       }
