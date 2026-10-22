@@ -47,5 +47,20 @@
     }).format(new Date(iso));
   }
 
-  window.WishAPI = { rpc, fmtTime };
+  const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // 一封信的 HTML，来宾页和导出的静态页共用；所有内容都先转义
+  function letterHTML(w, i, extra) {
+    const name = w.nickname || "没署名的人";
+    const initial = w.nickname ? [...w.nickname.trim()][0] : "✦";
+    return `<article class="letter t${i % 4}${w.pinned ? " pinned" : ""}${extra ? " " + extra : ""}" style="animation-delay:${Math.min(i, 12) * 40}ms">
+  ${w.pinned ? '<span class="pin">第一封</span>' : ""}
+  <p class="letter-q">${esc(w.question)}</p>
+  <p class="letter-text">${esc(w.body)}</p>
+  <div class="letter-foot"><span class="avatar">${esc(initial)}</span><span class="who">${esc(name)}</span><span class="when">${esc(fmtTime(w.created_at))}</span></div>
+</article>`;
+  }
+
+  window.WishAPI = { rpc, fmtTime, esc, letterHTML };
 })();

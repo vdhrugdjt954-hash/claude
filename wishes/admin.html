@@ -44,17 +44,12 @@
       </form>
     </details>
 
-    <details class="card">
-      <summary>拆封时间</summary>
-      <form id="unseal">
-        <div class="field">
-          <label for="unsealAt">到这个时间，大家打开页面就能看到审过的信（按你手机的时区）</label>
-          <input type="datetime-local" id="unsealAt" style="width:100%;font-size:16px;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)">
-        </div>
-        <button type="submit">保存</button>
-        <p class="msg" id="unsealMsg"></p>
-      </form>
-    </details>
+    <div class="card" style="margin:0 0 16px">
+      <label class="check" style="color:var(--ink);font-size:15px">
+        <input type="checkbox" id="auto"> 新写的直接显示（关掉就是你先审过才显示）
+      </label>
+      <p class="msg" id="autoMsg"></p>
+    </div>
 
     <div class="row" style="margin:0 0 16px">
       <span class="count" id="summary"></span>
@@ -65,10 +60,10 @@
     </div>
 
     <div class="tabs" id="tabs">
-      <button class="ghost on" data-f="pending">待审</button>
-      <button class="ghost" data-f="approved">已通过</button>
-      <button class="ghost" data-f="rejected">不放</button>
-      <button class="ghost" data-f="all">全部</button>
+      <button class="ghost on" data-f="all">全部</button>
+      <button class="ghost" data-f="approved">显示中</button>
+      <button class="ghost" data-f="pending">待审</button>
+      <button class="ghost" data-f="rejected">藏起来的</button>
     </div>
     <div id="list"></div>
   </section>
@@ -80,8 +75,8 @@
 (function () {
   const C = window.WISH_CONFIG, api = window.WishAPI;
   const $ = (id) => document.getElementById(id);
-  let pass = "", all = [], filter = "pending";
-  const LABEL = { pending: "待审", approved: "已通过", rejected: "不放" };
+  let pass = "", all = [], filter = "all";
+  const LABEL = { pending: "待审", approved: "显示中", rejected: "藏起来了" };
 
   try { pass = sessionStorage.getItem("wish_pass") || ""; } catch (e) {}
 
@@ -92,7 +87,7 @@
   async function refresh() {
     all = await api.rpc("admin_list", { p_pass: pass });
     const n = (s) => all.filter((w) => w.status === s).length;
-    $("summary").textContent = `共 ${all.length} 封 · 待审 ${n("pending")} · 通过 ${n("approved")}`;
+    $("summary").textContent = `共 ${all.length} 封 · 显示中 ${n("approved")} · 待审 ${n("pending")}`;
     render();
   }
 
@@ -114,8 +109,8 @@
       const t = document.createElement("div"); t.className = "text"; t.textContent = w.body;
       const acts = document.createElement("div"); acts.className = "acts";
       const mk = (label, fn) => { const b = document.createElement("button"); b.className = "ghost"; b.textContent = label; b.onclick = fn; acts.appendChild(b); };
-      if (w.status !== "approved") mk("通过", () => act("admin_set_status", { p_id: w.id, p_status: "approved" }));
-      if (w.status !== "rejected") mk("不放", () => act("admin_set_status", { p_id: w.id, p_status: "rejected" }));
+      if (w.status !== "approved") mk("显示", () => act("admin_set_status", { p_id: w.id, p_status: "approved" }));
+      if (w.status !== "rejected") mk("藏起来", () => act("admin_set_status", { p_id: w.id, p_status: "rejected" }));
       if (w.status !== "pending")  mk("放回待审", () => act("admin_set_status", { p_id: w.id, p_status: "pending" }));
       mk("删掉", () => { if (confirm("删了就找不回来了，确定？")) act("admin_delete", { p_id: w.id }); });
       card.append(meta, q, t, acts);
@@ -135,9 +130,7 @@
       $("login").classList.add("hidden");
       $("panel").classList.remove("hidden");
       const s = await api.rpc("wish_status");
-      const d = new Date(s.unseal_at);
-      const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-      $("unsealAt").value = local;
+      $("auto").checked = s.auto_approve;
     } catch (e) {
       $("loginMsg").textContent = e.message;
       try { sessionStorage.removeItem("wish_pass"); } catch (_) {}
@@ -163,14 +156,12 @@
     } catch (err) { m.className = "msg err"; m.textContent = err.message; }
   });
 
-  $("unseal").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const m = $("unsealMsg");
-    if (!$("unsealAt").value) { m.className = "msg err"; m.textContent = "先选个时间"; return; }
+  $("auto").addEventListener("change", async (e) => {
+    const m = $("autoMsg"), on = e.target.checked;
     try {
-      await api.rpc("admin_set_unseal", { p_pass: pass, p_unseal_at: new Date($("unsealAt").value).toISOString() });
-      m.className = "msg ok"; m.textContent = "改好了";
-    } catch (err) { m.className = "msg err"; m.textContent = err.message; }
+      await api.rpc("admin_set_auto_approve", { p_pass: pass, p_on: on });
+      m.className = "msg ok"; m.textContent = on ? "新写的会直接显示" : "新写的要你点了「显示」才出现";
+    } catch (err) { e.target.checked = !on; m.className = "msg err"; m.textContent = err.message; }
   });
 
   function download(name, text, type) {
@@ -185,24 +176,28 @@
   $("exportJson").onclick = () =>
     download(`wishes-${stamp()}.json`, JSON.stringify(all.map(({ ip_hash, ...w }) => w), null, 2), "application/json");
 
-  // 导出一份不依赖数据库的静态页：只含已通过的信，自己存着或者到那天单独发
+  // 导出一份不依赖数据库的静态页：只含显示中的信，样式和主图都塞进同一个文件，单独打开也完整
   $("exportHtml").onclick = async () => {
-    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const esc = api.esc;
     const css = await fetch("style.css").then((r) => r.text()).catch(() => "");
+    let hero = "";
+    if (C.HERO_IMAGE) {
+      try {
+        const blob = await fetch(C.HERO_IMAGE).then((r) => r.blob());
+        hero = await new Promise((ok) => { const fr = new FileReader(); fr.onload = () => ok(fr.result); fr.readAsDataURL(blob); });
+      } catch (e) {}
+    }
     const rows = all.filter((w) => w.status === "approved")
-      .sort((a, b) => (b.pinned - a.pinned) || (new Date(a.created_at) - new Date(b.created_at)));
-    const letters = rows.map((w) => `
-<div class="env" tabindex="0" onclick="this.classList.add('open')">
-  <div class="env-head"><span class="who">${esc(w.nickname || "没署名的人")}</span><span>${esc(api.fmtTime(w.created_at))}</span></div>
-  <div class="env-body"><p class="env-q">${esc(w.question)}</p><p class="env-text">${esc(w.body)}</p></div>
-</div>`).join("");
+      .sort((a, b) => (b.pinned - a.pinned) || (new Date(b.created_at) - new Date(a.created_at)));
     const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(C.TITLE)}</title>
 <style>${css}</style></head><body><main>
-<h1>${esc(C.TITLE)}</h1><p class="sub">${esc(C.SUBTITLE)}</p>
-${C.HERO_IMAGE ? `<img class="hero" src="${esc(C.HERO_IMAGE)}" alt="">` : ""}
-<p class="status">一共 <b>${rows.length}</b> 封</p>
-<div class="letters">${letters}</div></main></body></html>`;
+${C.BADGE ? `<span class="badge">${esc(C.BADGE)}</span>` : ""}
+<h1>${esc(C.TITLE)}</h1><p class="sub">${esc(C.SUBTITLE)}</p><div class="flourish">✦</div>
+${hero ? `<figure class="hero"><img src="${hero}" alt=""></figure>` : ""}
+<h2 class="section-title">大家写的</h2><p class="section-sub">一共 ${rows.length} 封</p>
+<div class="letters">${rows.map((w, i) => api.letterHTML(w, i)).join("")}</div>
+<p class="foot">✦</p></main></body></html>`;
     download(`wishes-${stamp()}.html`, html, "text/html");
   };
 })();

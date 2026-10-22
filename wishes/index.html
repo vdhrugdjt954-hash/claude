@@ -3,40 +3,42 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f0e8">
 <title>一百天</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main>
+  <span class="badge hidden" id="badge"></span>
   <h1 id="title"></h1>
   <p class="sub" id="subtitle"></p>
-  <img class="hero hidden" id="hero" alt="">
-  <p class="status" id="status">正在看攒了几封…</p>
-
-  <!-- 拆开之后才出现 -->
-  <section id="opened" class="hidden">
-    <div class="letters" id="letters"></div>
-    <p class="section-title">还想再写一句的话</p>
-  </section>
+  <div class="flourish">✦</div>
+  <figure class="hero hidden" id="hero"><img alt=""></figure>
 
   <form class="card" id="form" autocomplete="off">
+    <p class="form-title">留一句给<span class="recipient"></span></p>
     <div class="field">
-      <label for="q">挑一个来答</label>
-      <select id="q"></select>
+      <label>挑一个来答</label>
+      <div class="chips" id="chips" role="radiogroup"></div>
     </div>
     <div class="field">
-      <label for="body">写给<span class="recipient"></span></label>
-      <textarea id="body" placeholder="一两句就好"></textarea>
+      <textarea id="body" placeholder="一两句就好" aria-label="正文"></textarea>
       <div class="row"><span></span><span class="count" id="count"></span></div>
     </div>
     <div class="field">
       <label for="name">你的名字</label>
       <input type="text" id="name" maxlength="20" placeholder="她认得出你的那个称呼">
-      <label class="check" style="margin-top:8px"><input type="checkbox" id="anon"> 不署名</label>
+      <label class="check" style="margin-top:10px"><input type="checkbox" id="anon"> 不署名</label>
     </div>
-    <button type="submit" id="send">寄出</button>
+    <button type="submit" class="wide" id="send">写好了</button>
     <p class="msg" id="msg" role="status"></p>
   </form>
+
+  <h2 class="section-title" id="listTitle">大家写的</h2>
+  <p class="section-sub" id="status">正在翻…</p>
+  <div class="letters" id="letters"></div>
+
+  <p class="foot">✦</p>
 </main>
 
 <script src="config.js"></script>
@@ -49,16 +51,23 @@
   document.title = C.TITLE;
   $("title").textContent = C.TITLE;
   $("subtitle").textContent = C.SUBTITLE;
+  if (C.BADGE) { $("badge").textContent = C.BADGE; $("badge").classList.remove("hidden"); }
   document.querySelectorAll(".recipient").forEach((el) => (el.textContent = C.RECIPIENT));
-  if (C.HERO_IMAGE) { $("hero").src = C.HERO_IMAGE; $("hero").classList.remove("hidden"); }
+  if (C.HERO_IMAGE) { $("hero").querySelector("img").src = C.HERO_IMAGE; $("hero").classList.remove("hidden"); }
 
-  [...C.QUESTIONS, C.FREE_QUESTION].forEach((q) => {
-    const o = document.createElement("option");
-    o.value = o.textContent = q;
-    $("q").appendChild(o);
+  // 问题做成能点的小标签
+  [...C.QUESTIONS, C.FREE_QUESTION].forEach((q, i) => {
+    const l = document.createElement("label");
+    l.className = "chip";
+    const r = document.createElement("input");
+    r.type = "radio"; r.name = "q"; r.value = q; r.checked = i === 0;
+    const s = document.createElement("span");
+    s.textContent = q;
+    l.append(r, s);
+    $("chips").appendChild(l);
   });
+  const question = () => (document.querySelector('input[name=q]:checked') || {}).value || C.FREE_QUESTION;
 
-  // 字数
   const body = $("body"), count = $("count");
   const len = (s) => [...s.trim()].length;
   function updateCount() {
@@ -71,79 +80,22 @@
 
   $("anon").addEventListener("change", (e) => { $("name").disabled = e.target.checked; });
 
-  // 状态 + 拆开后的信
-  let unsealAt = null, total = 0, sealed = true;
-  function renderStatus() {
-    const el = $("status");
-    el.textContent = "";
-    if (!unsealAt) return;
-    const b = document.createElement("b");
-    b.textContent = total;
-    if (sealed) {
-      const days = Math.max(0, Math.ceil((unsealAt - Date.now()) / 86400000));
-      el.append("已经攒了 ", b, " 封，" + (days > 0 ? "还有 " + days + " 天" : "就快") + "一起拆开");
-    } else {
-      el.append("一共 ", b, " 封，拆开了");
-    }
-  }
-
-  function letterEl(w) {
-    const btn = document.createElement("div");
-    btn.className = "env";
-    btn.tabIndex = 0;
-    const head = document.createElement("div");
-    head.className = "env-head";
-    const who = document.createElement("span");
-    who.className = "who";
-    who.textContent = w.nickname || "没署名的人";
-    const when = document.createElement("span");
-    when.textContent = api.fmtTime(w.created_at);
-    head.append(who, when);
-
-    const bodyBox = document.createElement("div");
-    bodyBox.className = "env-body";
-    const q = document.createElement("p");
-    q.className = "env-q";
-    q.textContent = w.question;
-    const t = document.createElement("p");
-    t.className = "env-text";
-    t.textContent = w.body; // textContent，不会被当成 HTML
-    bodyBox.append(q, t);
-
-    btn.append(head, bodyBox);
-    const open = () => btn.classList.add("open");
-    btn.addEventListener("click", open);
-    btn.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") open(); });
-    return btn;
-  }
-
-  async function load() {
+  async function load(highlightFirst) {
     try {
-      const s = await api.rpc("wish_status");
-      unsealAt = new Date(s.unseal_at).getTime();
-      total = s.count;
-      sealed = s.sealed;
-      renderStatus();
-      if (!sealed) {
-        const list = await api.rpc("public_wishes");
-        const box = $("letters");
-        box.textContent = "";
-        if (!list.length) {
-          const p = document.createElement("p");
-          p.className = "empty";
-          p.textContent = "信还在路上";
-          box.appendChild(p);
-        }
-        list.forEach((w) => box.appendChild(letterEl(w)));
-        $("opened").classList.remove("hidden");
-      }
+      const [s, list] = await Promise.all([api.rpc("wish_status"), api.rpc("public_wishes")]);
+      $("status").textContent = list.length ? "一共 " + s.count + " 封，新的在前面" : "还没人写，你来第一个";
+      // 置顶那封之后的第一封就是最新的
+      const newestIdx = list.findIndex((w) => !w.pinned);
+      $("letters").innerHTML = list
+        .map((w, i) => api.letterHTML(w, i, highlightFirst && i === newestIdx ? "new" : ""))
+        .join("");
     } catch (e) {
       $("status").textContent = "暂时没连上，刷新试试";
     }
   }
-  load();
+  load(false);
 
-  // 寄出：只有数据库确认收到了才算成功
+  // 只有数据库确认收到了才算写进去；成功后从数据库重新读一遍
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const msg = $("msg"), send = $("send");
@@ -154,26 +106,29 @@
     if (len(text) > C.MAX_LEN) { msg.className = "msg err"; msg.textContent = "字有点多，挑最想说的那句"; return; }
 
     send.disabled = true;
-    send.textContent = "寄送中…";
+    send.textContent = "正在存…";
     try {
       const r = await api.rpc("submit_wish", {
         p_nickname: $("anon").checked ? "" : $("name").value,
-        p_question: $("q").value,
+        p_question: question(),
         p_body: text,
       });
       body.value = "";
       updateCount();
       msg.className = "msg ok";
-      msg.textContent = "寄出了，" + api.fmtTime(r.created_at) + "。" +
-        (sealed ? "到那天和大家的一起拆开。" : "过一遍之后就会出现在上面。");
-      total += 1;
-      renderStatus();
+      if (r.status === "approved") {
+        msg.textContent = "留下了 · " + api.fmtTime(r.created_at);
+        await load(true);
+        $("listTitle").scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        msg.textContent = "收到了 · " + api.fmtTime(r.created_at) + "，过一遍之后会出现在下面";
+      }
     } catch (err) {
       msg.className = "msg err";
       msg.textContent = err.message; // 写的字留在框里，不会丢
     } finally {
       send.disabled = false;
-      send.textContent = "寄出";
+      send.textContent = "写好了";
     }
   });
 })();

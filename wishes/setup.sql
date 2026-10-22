@@ -1,7 +1,7 @@
 -- 一百天祝福页：Supabase 建表脚本
 -- 用法：Supabase 控制台 → SQL Editor → 整段粘进去 → 改最下面两处 → Run
 -- 前端只拿得到下面这几个函数，碰不到表本身：
---   来宾：submit_wish 写一封、wish_status 看攒了几封、public_wishes 到日子后读
+--   来宾：submit_wish 写一封、wish_status 看有几封、public_wishes 读大家写的
 --   你：admin_* 系列，要口令
 
 create extension if not exists pgcrypto with schema extensions;
@@ -21,10 +21,14 @@ create table if not exists public.wishes (
 create index if not exists wishes_ip_time on public.wishes (ip_hash, created_at);
 
 create table if not exists public.wish_settings (
-  id          int primary key default 1 check (id = 1),
-  unseal_at   timestamptz not null,               -- 到这个时间才拆开
-  admin_hash  text not null                       -- 管理口令（只存哈希）
+  id           int primary key default 1 check (id = 1),
+  auto_approve boolean not null default true,     -- true：写完直接显示；false：你审过才显示
+  admin_hash   text not null                      -- 管理口令（只存哈希）
 );
+-- 跑过旧版脚本的话，顺手把表结构升级
+alter table public.wish_settings add column if not exists auto_approve boolean not null default true;
+alter table public.wish_settings drop column if exists unseal_at;
+drop function if exists public.admin_set_unseal(text, timestamptz);
 
 -- 表全部锁死，前端的匿名 key 直接读写表一律被拒
 alter table public.wishes        enable row level security;
@@ -88,32 +92,36 @@ begin
     raise exception 'too_many_global';
   end if;
 
-  insert into wishes (nickname, question, body, ip_hash)
-  values (n, q, b, h) returning * into row;
+  insert into wishes (nickname, question, body, ip_hash, status)
+  values (n, q, b, h,
+          case when (select auto_approve from wish_settings where id = 1)
+               then 'approved' else 'pending' end)
+  returning * into row;
 
-  return json_build_object('id', row.id, 'created_at', row.created_at);
+  return json_build_object('id', row.id, 'created_at', row.created_at, 'status', row.status);
 end $$;
 
--- ---------- 来宾：攒了几封、还封不封着 ----------
+-- ---------- 来宾：有几封、要不要审 ----------
+drop function if exists public.wish_status();
 create or replace function public.wish_status()
 returns json language sql security definer stable
 set search_path = public as $$
   select json_build_object(
-    'count',     (select count(*) from wishes where status <> 'rejected'),
-    'unseal_at', s.unseal_at,
-    'sealed',    now() < s.unseal_at)
+    'count',        (select count(*) from wishes where status = 'approved'),
+    'auto_approve', s.auto_approve)
   from wish_settings s where s.id = 1;
 $$;
 
--- ---------- 来宾：到日子后读（只读审过的） ----------
+-- ---------- 来宾：读大家写的（只读显示中的，置顶在前，新的在前） ----------
 create or replace function public.public_wishes()
 returns table (nickname text, question text, body text, pinned boolean, created_at timestamptz)
 language sql security definer stable
 set search_path = public as $$
   select w.nickname, w.question, w.body, w.pinned, w.created_at
-  from wishes w, wish_settings s
-  where s.id = 1 and now() >= s.unseal_at and w.status = 'approved'
-  order by w.pinned desc, w.created_at asc;
+  from wishes w
+  where w.status = 'approved'
+  order by w.pinned desc, w.created_at desc
+  limit 500;
 $$;
 
 -- ---------- 你：管理 ----------
@@ -156,13 +164,13 @@ begin
   return json_build_object('id', row.id, 'created_at', row.created_at);
 end $$;
 
--- 改拆封时间
-create or replace function public.admin_set_unseal(p_pass text, p_unseal_at timestamptz)
+-- 切换：写完直接显示 / 审过才显示
+create or replace function public.admin_set_auto_approve(p_pass text, p_on boolean)
 returns void language plpgsql security definer
 set search_path = public as $$
 begin
   perform _wish_check_admin(p_pass);
-  update wish_settings set unseal_at = p_unseal_at where id = 1;
+  update wish_settings set auto_approve = coalesce(p_on, true) where id = 1;
 end $$;
 
 -- ---------- 权限：只放出该放的函数 ----------
@@ -176,7 +184,7 @@ revoke execute on function public.admin_list(text)                      from pub
 revoke execute on function public.admin_set_status(text, bigint, text)  from public;
 revoke execute on function public.admin_delete(text, bigint)            from public;
 revoke execute on function public.admin_add_own(text, text, text, text) from public;
-revoke execute on function public.admin_set_unseal(text, timestamptz)   from public;
+revoke execute on function public.admin_set_auto_approve(text, boolean) from public;
 grant execute on function public.submit_wish(text, text, text)         to anon, authenticated;
 grant execute on function public.wish_status()                         to anon, authenticated;
 grant execute on function public.public_wishes()                       to anon, authenticated;
@@ -184,12 +192,10 @@ grant execute on function public.admin_list(text)                      to anon, 
 grant execute on function public.admin_set_status(text, bigint, text)  to anon, authenticated;
 grant execute on function public.admin_delete(text, bigint)            to anon, authenticated;
 grant execute on function public.admin_add_own(text, text, text, text) to anon, authenticated;
-grant execute on function public.admin_set_unseal(text, timestamptz)   to anon, authenticated;
+grant execute on function public.admin_set_auto_approve(text, boolean) to anon, authenticated;
 
--- ---------- 改这两处再运行 ----------
--- 1. 拆封时间（带时区，+07 是曼谷，+08 是北京）
--- 2. 管理口令，换成只有你知道的一串
-insert into public.wish_settings (id, unseal_at, admin_hash)
-values (1, '2026-12-31 00:00:00+07', extensions.crypt('改成你的管理口令', extensions.gen_salt('bf')))
-on conflict (id) do update
-  set unseal_at = excluded.unseal_at, admin_hash = excluded.admin_hash;
+-- ---------- 改这一处再运行 ----------
+-- 管理口令，换成只有你知道的一串
+insert into public.wish_settings (id, admin_hash)
+values (1, extensions.crypt('改成你的管理口令', extensions.gen_salt('bf')))
+on conflict (id) do update set admin_hash = excluded.admin_hash;

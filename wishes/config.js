@@ -6,8 +6,9 @@ window.WISH_CONFIG = {
   SUPABASE_KEY: "你的 anon 或 publishable key",
 
   // 页面上的字
+  BADGE: "DAY 100",                // 标题上面那个小标签，空着就不显示
   TITLE: "一百天",
-  SUBTITLE: "我在替她攒一百天的祝福，愿意的话留一句就好",
+  SUBTITLE: "她跟人认识满一百天了，愿意的话留一句就好",
   RECIPIENT: "她",                 // 页面里怎么称呼收信的人
   HERO_IMAGE: "",                  // 比如 "hero.webp"，放同一个文件夹；空着就不显示
 
