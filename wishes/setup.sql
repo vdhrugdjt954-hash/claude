@@ -42,7 +42,7 @@ revoke all on sequence public.wishes_id_seq from anon, authenticated;
 -- ---------- 内部小工具（不对外） ----------
 create or replace function public._wish_check_admin(p_pass text)
 returns void language plpgsql security definer
-set search_path = public, extensions as $$
+set search_path = public, extensions as $fn$
 declare h text;
 begin
   select admin_hash into h from wish_settings where id = 1;
@@ -50,11 +50,11 @@ begin
     perform pg_sleep(1);                           -- 拖慢乱猜口令
     raise exception 'bad_password';
   end if;
-end $$;
+end $fn$;
 
 create or replace function public._wish_client_hash()
 returns text language plpgsql security definer
-set search_path = public, extensions as $$
+set search_path = public, extensions as $fn$
 declare hdr json; ip text;
 begin
   begin
@@ -67,7 +67,7 @@ begin
     'unknown');
   -- 不存原始 IP，只存哈希，够限流用
   return encode(digest('wish-salt:' || trim(ip), 'sha256'), 'hex');
-end $$;
+end $fn$;
 
 -- 检查随信小画的格式，不合格直接拒
 -- 画布是 1000×1000 的方形，左上角 (0,0)。一幅画 = 一串笔画：
@@ -76,7 +76,7 @@ end $$;
 --   opacity 可选 0.05~1；fill 可选 true/false（true = 把这一笔围起来涂满）
 create or replace function public._wish_check_strokes(p jsonb)
 returns void language plpgsql immutable
-set search_path = public as $$
+set search_path = public as $fn$
 declare st jsonb; pt jsonb; total int := 0; v numeric;
 begin
   if jsonb_typeof(p) <> 'array' then raise exception 'bad_strokes'; end if;
@@ -85,16 +85,17 @@ begin
   end if;
   for st in select * from jsonb_array_elements(p) loop
     if jsonb_typeof(st) <> 'object' then raise exception 'bad_strokes'; end if;
-    if coalesce(st ->> 'color', '') !~ '^#[0-9a-fA-F]{3,8}$' then raise exception 'bad_strokes'; end if;
+    if coalesce(st ->> 'color', '') !~ '^#[0-9a-fA-F]+' or char_length(st ->> 'color') not between 4 and 9
+       or substr(st ->> 'color', 2) ~ '[^0-9a-fA-F]' then raise exception 'bad_strokes'; end if;
     if jsonb_typeof(st -> 'width') <> 'number' then raise exception 'bad_strokes'; end if;
     v := (st ->> 'width')::numeric;
     if v < 1 or v > 60 then raise exception 'bad_strokes'; end if;
-    if st ? 'opacity' then
+    if (st -> 'opacity') is not null then
       if jsonb_typeof(st -> 'opacity') <> 'number' then raise exception 'bad_strokes'; end if;
       v := (st ->> 'opacity')::numeric;
       if v < 0.05 or v > 1 then raise exception 'bad_strokes'; end if;
     end if;
-    if st ? 'fill' and jsonb_typeof(st -> 'fill') <> 'boolean' then raise exception 'bad_strokes'; end if;
+    if (st -> 'fill') is not null and jsonb_typeof(st -> 'fill') <> 'boolean' then raise exception 'bad_strokes'; end if;
     if jsonb_typeof(st -> 'points') <> 'array' or jsonb_array_length(st -> 'points') < 1 then
       raise exception 'bad_strokes';
     end if;
@@ -111,13 +112,13 @@ begin
     end loop;
   end loop;
   if total > 12000 then raise exception 'drawing_too_big'; end if;
-end $$;
+end $fn$;
 
 -- ---------- 来宾：写一封 ----------
 drop function if exists public.submit_wish(text, text, text);
 create or replace function public.submit_wish(p_nickname text, p_question text, p_body text, p_strokes jsonb default null)
 returns json language plpgsql security definer
-set search_path = public, extensions as $$
+set search_path = public, extensions as $fn$
 declare
   n text := nullif(trim(coalesce(p_nickname, '')), '');
   q text := trim(coalesce(p_question, ''));
@@ -148,62 +149,62 @@ begin
   returning * into row;
 
   return json_build_object('id', row.id, 'created_at', row.created_at, 'status', row.status);
-end $$;
+end $fn$;
 
 -- ---------- 来宾：有几封、要不要审 ----------
 drop function if exists public.wish_status();
 create or replace function public.wish_status()
 returns json language sql security definer stable
-set search_path = public as $$
+set search_path = public as $fn$
   select json_build_object(
     'count',        (select count(*) from wishes where status = 'approved'),
     'auto_approve', s.auto_approve)
   from wish_settings s where s.id = 1;
-$$;
+$fn$;
 
 -- ---------- 来宾：读大家写的（只读显示中的，置顶在前，新的在前） ----------
 drop function if exists public.public_wishes();
 create or replace function public.public_wishes()
 returns table (nickname text, question text, body text, strokes jsonb, pinned boolean, created_at timestamptz)
 language sql security definer stable
-set search_path = public as $$
+set search_path = public as $fn$
   select w.nickname, w.question, w.body, w.strokes, w.pinned, w.created_at
   from wishes w
   where w.status = 'approved'
   order by w.pinned desc, w.created_at desc
   limit 500;
-$$;
+$fn$;
 
 -- ---------- 你：管理 ----------
 create or replace function public.admin_list(p_pass text)
 returns setof public.wishes language plpgsql security definer
-set search_path = public as $$
+set search_path = public as $fn$
 begin
   perform _wish_check_admin(p_pass);
   return query select * from wishes order by pinned desc, created_at asc;
-end $$;
+end $fn$;
 
 create or replace function public.admin_set_status(p_pass text, p_id bigint, p_status text)
 returns void language plpgsql security definer
-set search_path = public as $$
+set search_path = public as $fn$
 begin
   perform _wish_check_admin(p_pass);
   if p_status not in ('pending', 'approved', 'rejected') then raise exception 'bad_status'; end if;
   update wishes set status = p_status where id = p_id;
-end $$;
+end $fn$;
 
 create or replace function public.admin_delete(p_pass text, p_id bigint)
 returns void language plpgsql security definer
-set search_path = public as $$
+set search_path = public as $fn$
 begin
   perform _wish_check_admin(p_pass);
   delete from wishes where id = p_id;
-end $$;
+end $fn$;
 
 -- 你自己那第一封：直接通过、置顶
 create or replace function public.admin_add_own(p_pass text, p_nickname text, p_question text, p_body text)
 returns json language plpgsql security definer
-set search_path = public as $$
+set search_path = public as $fn$
 declare row wishes;
 begin
   perform _wish_check_admin(p_pass);
@@ -212,16 +213,16 @@ begin
   values (nullif(trim(p_nickname), ''), trim(coalesce(p_question, '')), trim(p_body), 'approved', true)
   returning * into row;
   return json_build_object('id', row.id, 'created_at', row.created_at);
-end $$;
+end $fn$;
 
 -- 切换：写完直接显示 / 审过才显示
 create or replace function public.admin_set_auto_approve(p_pass text, p_on boolean)
 returns void language plpgsql security definer
-set search_path = public as $$
+set search_path = public as $fn$
 begin
   perform _wish_check_admin(p_pass);
   update wish_settings set auto_approve = coalesce(p_on, true) where id = 1;
-end $$;
+end $fn$;
 
 -- ---------- 权限：只放出该放的函数 ----------
 -- 只动这页自己的函数，不碰库里别的东西
