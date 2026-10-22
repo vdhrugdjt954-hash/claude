@@ -2,8 +2,8 @@
 window.WISH_CONFIG = {
   // Supabase 控制台 → Project Settings → API 里抄这两个
   // key 用 anon / publishable 那个，千万别填 service_role / secret
-  SUPABASE_URL: "https://你的项目.supabase.co",
-  SUPABASE_KEY: "你的 anon 或 publishable key",
+  SUPABASE_URL: "https://mxfnpfptpjldtbcoigie.supabase.co",
+  SUPABASE_KEY: "sb_publishable_fmzK9dYK5AVhsjLgI0Jd1A_aNRAKKsf",
 
   // 页面上的字
   BADGE: "DAY 100",                // 标题上面那个小标签，空着就不显示
