@@ -37,7 +37,6 @@
       <summary>写你自己那一封（会排第一）</summary>
       <form id="own">
         <div class="field"><label for="ownName">署名</label><input type="text" id="ownName" maxlength="20"></div>
-        <div class="field"><label for="ownQ">回答哪个问题</label><select id="ownQ"></select></div>
         <div class="field"><label for="ownBody">正文</label><textarea id="ownBody"></textarea></div>
         <button type="submit">放进去</button>
         <p class="msg" id="ownMsg"></p>
@@ -80,9 +79,6 @@
 
   try { pass = sessionStorage.getItem("wish_pass") || ""; } catch (e) {}
 
-  [...C.QUESTIONS, C.FREE_QUESTION].forEach((q) => {
-    const o = document.createElement("option"); o.value = o.textContent = q; $("ownQ").appendChild(o);
-  });
 
   async function refresh() {
     all = await api.rpc("admin_list", { p_pass: pass });
@@ -105,16 +101,29 @@
       const when = document.createElement("span"); when.textContent = api.fmtTime(w.created_at);
       const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = (w.pinned ? "置顶 · " : "") + LABEL[w.status];
       meta.append(who, when, tag);
-      const q = document.createElement("div"); q.className = "meta"; q.textContent = w.question;
       const t = document.createElement("div"); t.className = "text"; t.textContent = w.body;
+      let art = null;
+      if (w.strokes && w.strokes.length) {
+        art = document.createElement("canvas"); art.className = "letter-art"; art.style.maxWidth = "220px";
+      }
       const acts = document.createElement("div"); acts.className = "acts";
       const mk = (label, fn) => { const b = document.createElement("button"); b.className = "ghost"; b.textContent = label; b.onclick = fn; acts.appendChild(b); };
       if (w.status !== "approved") mk("显示", () => act("admin_set_status", { p_id: w.id, p_status: "approved" }));
       if (w.status !== "rejected") mk("藏起来", () => act("admin_set_status", { p_id: w.id, p_status: "rejected" }));
       if (w.status !== "pending")  mk("放回待审", () => act("admin_set_status", { p_id: w.id, p_status: "pending" }));
-      mk("删掉", () => { if (confirm("删了就找不回来了，确定？")) act("admin_delete", { p_id: w.id }); });
-      card.append(meta, q, t, acts);
+      // 删除要点两次，防手滑
+      const del = document.createElement("button"); del.type = "button"; del.className = "ghost"; del.textContent = "删掉";
+      del.onclick = () => {
+        if (del.dataset.armed) return act("admin_delete", { p_id: w.id });
+        del.dataset.armed = "1"; del.textContent = "再点一次就删了";
+        setTimeout(() => { delete del.dataset.armed; del.textContent = "删掉"; }, 3000);
+      };
+      acts.appendChild(del);
+      card.append(meta);
+      if (art) card.append(art);
+      card.append(t, acts);
       box.appendChild(card);
+      if (art) api.paint(art, w.strokes);
     });
   }
 
@@ -151,7 +160,7 @@
     e.preventDefault();
     const m = $("ownMsg");
     try {
-      await api.rpc("admin_add_own", { p_pass: pass, p_nickname: $("ownName").value, p_question: $("ownQ").value, p_body: $("ownBody").value });
+      await api.rpc("admin_add_own", { p_pass: pass, p_nickname: $("ownName").value, p_question: "", p_body: $("ownBody").value });
       $("ownBody").value = ""; m.className = "msg ok"; m.textContent = "放进去了，排第一"; await refresh();
     } catch (err) { m.className = "msg err"; m.textContent = err.message; }
   });
@@ -196,7 +205,7 @@ ${C.BADGE ? `<span class="badge">${esc(C.BADGE)}</span>` : ""}
 <h1>${esc(C.TITLE)}</h1><p class="sub">${esc(C.SUBTITLE)}</p><div class="flourish">✦</div>
 ${hero ? `<figure class="hero"><img src="${hero}" alt=""></figure>` : ""}
 <h2 class="section-title">大家写的</h2><p class="section-sub">一共 ${rows.length} 封</p>
-<div class="letters">${rows.map((w, i) => api.letterHTML(w, i)).join("")}</div>
+<div class="letters">${rows.map((w, i) => api.letterHTML(w, i, "", w.strokes && w.strokes.length ? api.artDataURL(w.strokes, 600) : "")).join("")}</div>
 <p class="foot">✦</p></main></body></html>`;
     download(`wishes-${stamp()}.html`, html, "text/html");
   };

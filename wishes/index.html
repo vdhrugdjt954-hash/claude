@@ -14,25 +14,111 @@
   <p class="sub" id="subtitle"></p>
   <div class="flourish">✦</div>
   <figure class="hero hidden" id="hero"><img alt=""></figure>
+  <p class="demo-note hidden" id="demoNote">预览模式：还没连数据库，写的东西刷新就没了</p>
 
   <form class="card" id="form" autocomplete="off">
     <p class="form-title">留一句给<span class="recipient"></span></p>
     <div class="field">
-      <label>挑一个来答</label>
-      <div class="chips" id="chips" role="radiogroup"></div>
-    </div>
-    <div class="field">
-      <textarea id="body" placeholder="一两句就好" aria-label="正文"></textarea>
+      <textarea id="body" placeholder="一两句就好" aria-label="祝福"></textarea>
       <div class="row"><span></span><span class="count" id="count"></span></div>
     </div>
+
+    <div class="field">
+      <div class="row">
+        <label style="margin:0">顺手画一笔（可以不画）</label>
+        <span class="count" id="padInfo"></span>
+      </div>
+      <div class="pad-wrap">
+        <canvas id="pad" class="pad" aria-label="画板，用手指或鼠标画"></canvas>
+      </div>
+      <div class="tools">
+        <div class="swatches" id="swatches" role="radiogroup" aria-label="颜色"></div>
+        <div class="tool-row">
+          <div class="sizes" id="sizes" role="radiogroup" aria-label="笔粗"></div>
+          <span class="tool-btns">
+            <button type="button" class="ghost" id="undo">撤销</button>
+            <button type="button" class="ghost" id="clear">清空</button>
+          </span>
+        </div>
+      </div>
+      <details class="paste">
+        <summary>我是 AI，粘贴笔画数据</summary>
+        <textarea id="strokesJson" class="mono" placeholder='[{"color":"#e48fa3","width":8,"points":[[500,300],[420,220]]}]' aria-label="笔画数据"></textarea>
+        <button type="button" class="ghost" id="applyJson">放到画布上</button>
+        <p class="msg" id="jsonMsg"></p>
+      </details>
+    </div>
+
     <div class="field">
       <label for="name">你的名字</label>
       <input type="text" id="name" maxlength="20" placeholder="她认得出你的那个称呼">
       <label class="check" style="margin-top:10px"><input type="checkbox" id="anon"> 不署名</label>
     </div>
-    <button type="submit" class="wide" id="send">写好了</button>
+    <button type="submit" class="wide" id="send">寄出</button>
     <p class="msg" id="msg" role="status"></p>
   </form>
+
+  <section class="card ai-card">
+    <p class="form-title">让你的 AI 也来写一句</p>
+    <p class="hint">点下面的按钮，把复制好的整段话发给你的 AI。它会写一句祝福，用 Python 算好坐标画一幅小画，然后自己寄过来。它要是没法联网，会把内容回给你，你粘到上面「我是 AI」那个框里就行。</p>
+    <button type="button" class="wide" id="copyAi">复制给 AI</button>
+    <p class="msg" id="copyMsg"></p>
+    <details class="paste" id="for-ai">
+      <summary>给 AI 看的说明（复制的就是这段）</summary>
+<pre id="aiGuide" class="mono guide">这是一个一百天祝福页。请你留一句祝福，再附一幅小画。可以用 Python（或别的语言）算出笔画坐标，直接寄出。
+
+【画布】1000×1000 的正方形，左上角是 (0,0)，x 往右变大，y 往下变大。底色是米白色的纸。
+
+【一幅画】是一串笔画（JSON 数组），每一笔长这样：
+  {"color": "#e48fa3", "width": 8, "points": [[x, y], [x, y], ...], "opacity": 0.9, "fill": false}
+  color    必填，#hex 颜色
+  width    必填，笔粗 1~60
+  points   必填，至少 1 个点，坐标 0~1000；只有 1 个点就画一个圆点
+  opacity  可选，透明度 0.05~1
+  fill     可选，true = 把这一笔首尾连起来涂满，画实心形状用
+  最多 400 笔、一共 12000 个点。先画的在下面，后画的盖在上面。
+
+【祝福】正文 1~120 字。署名 20 字以内，不想署名就传空字符串。
+
+【寄出】
+  POST SUPABASE_URL/rest/v1/rpc/submit_wish
+  请求头  apikey: SUPABASE_KEY
+          Content-Type: application/json
+  请求体  {"p_nickname": "你的名字", "p_question": "", "p_body": "祝福正文", "p_strokes": [ ...笔画... ]}
+  成功会返回 {"id": .., "created_at": .., "status": "approved"}。status 是 pending 的话，要等主人看过才显示。
+  同一个网络 10 分钟最多寄 3 封，失败了先看返回的 message。
+  （SUPABASE_URL 和 SUPABASE_KEY 的值写在本站的 config.js 里）
+
+【Python 示例】
+import math, requests
+
+URL = "SUPABASE_URL"
+KEY = "SUPABASE_KEY"
+
+def circle(cx, cy, r, n=60):
+    return [[round(cx + r * math.cos(2 * math.pi * i / n), 1),
+             round(cy + r * math.sin(2 * math.pi * i / n), 1)] for i in range(n + 1)]
+
+strokes = [
+    {"color": "#f6cf8e", "width": 4, "points": circle(500, 430, 170), "fill": True},
+    {"color": "#c07a5c", "width": 10, "points": circle(500, 430, 170)},
+    {"color": "#3a2f29", "width": 14, "points": [[440, 400]]},
+    {"color": "#3a2f29", "width": 14, "points": [[560, 400]]},
+    {"color": "#3a2f29", "width": 8, "points": [[440, 480], [470, 505], [530, 505], [560, 480]]},
+]
+
+r = requests.post(
+    f"{URL}/rest/v1/rpc/submit_wish",
+    headers={"apikey": KEY, "Content-Type": "application/json"},
+    json={"p_nickname": "你的名字", "p_question": "", "p_body": "一百天快乐", "p_strokes": strokes},
+)
+print(r.status_code, r.text)
+
+【没法联网的话】把祝福正文、署名和 strokes 的 JSON 发回给把这段话转给你的人，他会粘到页面上替你寄。
+
+画之前先想想要画什么，画点跟她、跟这一百天有关的东西。示例里的笑脸只是演示格式，换成你自己的。</pre>
+    </details>
+  </section>
 
   <h2 class="section-title" id="listTitle">大家写的</h2>
   <p class="section-sub" id="status">正在翻…</p>
@@ -55,20 +141,9 @@
   if (C.BADGE) { $("badge").textContent = C.BADGE; $("badge").classList.remove("hidden"); }
   document.querySelectorAll(".recipient").forEach((el) => (el.textContent = C.RECIPIENT));
   if (C.HERO_IMAGE) { $("hero").querySelector("img").src = C.HERO_IMAGE; $("hero").classList.remove("hidden"); }
+  if (api.DEMO) $("demoNote").classList.remove("hidden");
 
-  // 问题做成能点的小标签
-  [...C.QUESTIONS, C.FREE_QUESTION].forEach((q, i) => {
-    const l = document.createElement("label");
-    l.className = "chip";
-    const r = document.createElement("input");
-    r.type = "radio"; r.name = "q"; r.value = q; r.checked = i === 0;
-    const s = document.createElement("span");
-    s.textContent = q;
-    l.append(r, s);
-    $("chips").appendChild(l);
-  });
-  const question = () => (document.querySelector('input[name=q]:checked') || {}).value || C.FREE_QUESTION;
-
+  // ---------- 字数 ----------
   const body = $("body"), count = $("count");
   const len = (s) => [...s.trim()].length;
   function updateCount() {
@@ -78,25 +153,154 @@
   }
   body.addEventListener("input", updateCount);
   updateCount();
-
   $("anon").addEventListener("change", (e) => { $("name").disabled = e.target.checked; });
 
+  // ---------- 画板 ----------
+  const COLORS = [
+    ["#3a2f29", "墨"], ["#e48fa3", "玫瑰"], ["#f2b8a0", "蜜桃"], ["#f6cf8e", "奶黄"],
+    ["#8fb58a", "青草"], ["#8db4d9", "天蓝"], ["#b9a3d6", "藕紫"], [api.PAPER, "橡皮"],
+  ];
+  const SIZES = [[6, "细"], [14, "中"], [30, "粗"]];
+  let color = COLORS[1][0], width = SIZES[1][0];
+  let strokes = [], current = null;
+  const pad = $("pad");
+
+  function radios(box, items, name, initial, onPick, render) {
+    items.forEach(([v, label]) => {
+      const l = document.createElement("label");
+      l.className = name;
+      const r = document.createElement("input");
+      r.type = "radio"; r.name = name; r.value = v; r.checked = v === initial;
+      r.setAttribute("aria-label", label);
+      r.addEventListener("change", () => onPick(v));
+      const s = document.createElement("span");
+      render(s, v, label);
+      l.append(r, s);
+      box.appendChild(l);
+    });
+  }
+  radios($("swatches"), COLORS, "swatch", color, (v) => (color = v), (s, v, label) => {
+    s.style.background = v; s.title = label;
+    if (v === api.PAPER) s.textContent = "擦";
+  });
+  radios($("sizes"), SIZES, "size", width, (v) => (width = Number(v)), (s, v, label) => {
+    const dot = document.createElement("i");
+    dot.style.width = dot.style.height = Math.max(4, v / 2.2) + "px";
+    s.append(dot, label);
+  });
+
+  const totalPoints = () => strokes.reduce((n, s) => n + s.points.length, 0);
+  function updatePadInfo() {
+    $("padInfo").textContent = strokes.length ? strokes.length + " 笔" : "";
+  }
+  function redraw() {
+    api.paint(pad, strokes);
+    updatePadInfo();
+  }
+  function toLogical(e) {
+    const r = pad.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * 1000;
+    const y = ((e.clientY - r.top) / r.height) * 1000;
+    return [Math.round(Math.max(0, Math.min(1000, x))), Math.round(Math.max(0, Math.min(1000, y)))];
+  }
+  function segment(a, b, st) {
+    const ctx = pad.getContext("2d");
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = ctx.fillStyle = st.color;
+    ctx.lineWidth = st.width;
+    ctx.lineCap = ctx.lineJoin = "round";
+    ctx.beginPath();
+    if (!b) { ctx.arc(a[0], a[1], st.width / 2, 0, Math.PI * 2); ctx.fill(); return; }
+    ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  }
+  pad.addEventListener("pointerdown", (e) => {
+    if (totalPoints() >= 11900) return;
+    pad.setPointerCapture(e.pointerId);
+    const p = toLogical(e);
+    current = { color, width, points: [p] };
+    strokes.push(current);
+    segment(p, null, current);
+    updatePadInfo();
+  });
+  pad.addEventListener("pointermove", (e) => {
+    if (!current) return;
+    const p = toLogical(e), last = current.points[current.points.length - 1];
+    if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 4 || totalPoints() >= 12000) return;
+    current.points.push(p);
+    segment(last, p, current);
+  });
+  const end = () => { current = null; };
+  pad.addEventListener("pointerup", end);
+  pad.addEventListener("pointercancel", end);
+  $("undo").addEventListener("click", () => { strokes.pop(); redraw(); });
+  $("clear").addEventListener("click", () => { strokes = []; redraw(); });
+  addEventListener("resize", redraw);
+  redraw();
+
+  $("applyJson").addEventListener("click", () => {
+    const m = $("jsonMsg");
+    try {
+      strokes = api.normalizeStrokes($("strokesJson").value.trim());
+      redraw();
+      m.className = "msg ok";
+      m.textContent = "放上去了，" + strokes.length + " 笔。写好祝福就能寄出";
+    } catch (e) {
+      m.className = "msg err";
+      m.textContent = "格式不对：要一个笔画数组，每笔有 color、width、points，坐标在 0~1000";
+    }
+  });
+
+  // ---------- 复制给 AI ----------
+  const guide = $("aiGuide");
+  const pageUrl = location.href.split("#")[0];
+  let guideText = guide.textContent;
+  if (!api.DEMO) {
+    const url = C.SUPABASE_URL.replace(/\/$/, "");
+    guideText = guideText.split("SUPABASE_URL").join(url).split("SUPABASE_KEY").join(C.SUPABASE_KEY)
+      .replace("（" + url + " 和 " + C.SUPABASE_KEY + " 的值写在本站的 config.js 里）\n", "");
+    if (C.SUPABASE_KEY.startsWith("eyJ")) {
+      guideText = guideText
+        .replace("          Content-Type: application/json", "          Authorization: Bearer " + C.SUPABASE_KEY + "\n          Content-Type: application/json")
+        .replace('headers={"apikey": KEY, ', 'headers={"apikey": KEY, "Authorization": f"Bearer {KEY}", ');
+    }
+  }
+  guideText = "页面地址：" + pageUrl + "\n收祝福的人：" + C.RECIPIENT + "（" + C.TITLE + "）\n\n" + guideText;
+  guide.textContent = guideText;
+
+  $("copyAi").addEventListener("click", async () => {
+    const m = $("copyMsg");
+    try {
+      await navigator.clipboard.writeText(guideText);
+      m.className = "msg ok";
+      m.textContent = "复制好了，发给你的 AI 吧";
+    } catch (e) {
+      $("for-ai").open = true;
+      const range = document.createRange();
+      range.selectNodeContents(guide);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      m.className = "msg";
+      m.textContent = "没能自动复制，已经帮你选中了，长按复制";
+    }
+  });
+
+  // ---------- 信 ----------
   async function load(highlightFirst) {
     try {
       const [s, list] = await Promise.all([api.rpc("wish_status"), api.rpc("public_wishes")]);
       $("status").textContent = list.length ? "一共 " + s.count + " 封，新的在前面" : "还没人写，你来第一个";
-      // 置顶那封之后的第一封就是最新的
       const newestIdx = list.findIndex((w) => !w.pinned);
-      $("letters").innerHTML = list
+      const box = $("letters");
+      box.innerHTML = list
         .map((w, i) => api.letterHTML(w, i, highlightFirst && i === newestIdx ? "new" : ""))
         .join("");
+      api.paintAll(box, list);
     } catch (e) {
       $("status").textContent = "暂时没连上，刷新试试";
     }
   }
   load(false);
 
-  // 只有数据库确认收到了才算写进去；成功后从数据库重新读一遍
+  // 只有数据库确认收到了才算寄出；成功后从数据库重新读一遍
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const msg = $("msg"), send = $("send");
@@ -107,19 +311,23 @@
     if (len(text) > C.MAX_LEN) { msg.className = "msg err"; msg.textContent = "字有点多，挑最想说的那句"; return; }
 
     send.disabled = true;
-    send.textContent = "正在存…";
+    send.textContent = "正在寄…";
     try {
       const r = await api.rpc("submit_wish", {
         p_nickname: $("anon").checked ? "" : $("name").value,
-        p_question: question(),
+        p_question: "",
         p_body: text,
+        p_strokes: strokes.length ? strokes : null,
       });
       body.value = "";
       updateCount();
+      strokes = [];
+      redraw();
+      $("strokesJson").value = "";
       msg.className = "msg ok";
       if (window.WishFX) WishFX.celebrate(send);
       if (r.status === "approved") {
-        msg.textContent = "留下了 · " + api.fmtTime(r.created_at);
+        msg.textContent = "寄到了 · " + api.fmtTime(r.created_at);
         await load(true);
         setTimeout(() => $("listTitle").scrollIntoView({ behavior: "smooth", block: "start" }), 900);
       } else {
@@ -127,10 +335,10 @@
       }
     } catch (err) {
       msg.className = "msg err";
-      msg.textContent = err.message; // 写的字留在框里，不会丢
+      msg.textContent = err.message; // 写的字和画都留着，不会丢
     } finally {
       send.disabled = false;
-      send.textContent = "写好了";
+      send.textContent = "寄出";
     }
   });
 })();

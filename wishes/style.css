@@ -21,7 +21,7 @@
   --serif: "Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", "SimSun", serif;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #1c1815;
     --blob1: #3a2820;
     --blob2: #33291c;
@@ -41,7 +41,30 @@
     --t1: #2f2223;
     --t2: #232a22;
     --t3: #212730;
+    color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #1c1815;
+  --blob1: #3a2820;
+  --blob2: #33291c;
+  --blob3: #262a20;
+  --paper: #26201c;
+  --ink: #f0e6dc;
+  --muted: #a8988b;
+  --line: #3a312a;
+  --accent: #dc9b7b;
+  --accent2: #e8b291;
+  --accent-ink: #1c1815;
+  --chip: #2f2722;
+  --ok: #93c293;
+  --err: #e8846f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
+  --t0: #2c241d;
+  --t1: #2f2223;
+  --t2: #232a22;
+  --t3: #212730;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -58,7 +81,12 @@ body {
   line-height: 1.75;
   -webkit-text-size-adjust: 100%;
 }
-main { position: relative; z-index: 1; max-width: 600px; margin: 0 auto; padding: 40px 16px 72px; }
+main {
+  position: relative; z-index: 1; max-width: 600px; margin: 0 auto;
+  padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
 
 /* ---------- 头部 ---------- */
 .badge {
@@ -264,4 +292,72 @@ h1 {
 }
 @media (prefers-reduced-motion: reduce) {
   .letter, .letter.new, h1, .flourish { animation: none; }
+}
+
+/* ---------- 画板 ---------- */
+.pad-wrap { display: flex; justify-content: center; margin: 4px 0 10px; }
+.pad {
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 1;
+  display: block;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  box-shadow: inset 0 1px 3px rgba(90, 60, 40, .08);
+  touch-action: none;
+  cursor: crosshair;
+  background: #fffaf3;
+}
+.tools { display: grid; gap: 10px; max-width: 420px; margin: 0 auto; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.swatch, .size { position: relative; margin: 0; }
+.swatch input, .size input { position: absolute; opacity: 0; pointer-events: none; }
+.swatch span {
+  display: grid; place-items: center;
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 2px solid var(--paper);
+  box-shadow: 0 0 0 1px var(--line);
+  font-size: 11px; color: var(--muted);
+  cursor: pointer;
+  transition: transform .15s, box-shadow .15s;
+}
+.swatch input:checked + span { box-shadow: 0 0 0 2px var(--accent); transform: scale(1.1); }
+.swatch input:focus-visible + span, .size input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tool-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.sizes { display: flex; gap: 6px; }
+.size span {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 99px;
+  background: var(--chip); font-size: 13px; color: var(--muted);
+  border: 1px solid transparent; cursor: pointer;
+}
+.size span i { display: inline-block; border-radius: 50%; background: currentColor; }
+.size input:checked + span { color: var(--accent); border-color: var(--accent); }
+.tool-btns { display: flex; gap: 6px; }
+
+.paste { margin-top: 12px; }
+.paste summary { font-size: 13px; color: var(--muted); cursor: pointer; }
+.paste[open] summary { margin-bottom: 8px; }
+.paste textarea { min-height: 90px; margin-bottom: 8px; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+.guide {
+  white-space: pre-wrap; word-break: break-word;
+  background: var(--chip); border-radius: 12px; padding: 12px 14px;
+  margin: 0; max-height: 420px; overflow: auto; line-height: 1.6;
+}
+.ai-card { margin-top: 18px; }
+.hint { font-size: 14px; color: var(--muted); margin: 0 0 14px; }
+.demo-note {
+  text-align: center; font-size: 13px; color: var(--accent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 50%, transparent);
+  border-radius: 12px; padding: 6px 12px; margin: 0 0 18px;
+}
+
+/* 信里的小画 */
+.letter-art {
+  display: block; width: 100%; max-width: 100%;
+  aspect-ratio: 1; height: auto;
+  border-radius: 10px; margin: 2px 0 12px;
+  background: #fffaf3;
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
 }

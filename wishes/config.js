@@ -12,14 +12,6 @@ window.WISH_CONFIG = {
   RECIPIENT: "她",                 // 页面里怎么称呼收信的人
   HERO_IMAGE: "",                  // 比如 "hero.webp"，放同一个文件夹；空着就不显示
 
-  // 来宾挑一个来答，最后一个是"随便说一句"
-  QUESTIONS: [
-    "你第一次注意到她是因为什么",
-    "这一百天里，你见过她最好看的一刻",
-    "想对一百天后的她说一句什么",
-  ],
-  FREE_QUESTION: "随便说一句",
-
   EFFECT: "petals",                // 背景特效："petals" 花瓣 / "stars" 星光 / "snow" 雪 / "none" 关掉
 
   MAX_LEN: 120,                    // 正文字数上限（数据库那边最多放 150）
