@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>管理信件</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+  .tabs button.on { background: var(--accent); color: var(--accent-ink); }
+  .item { margin: 0 0 12px; }
+  .item .meta { font-size: 13px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+  .item .text { white-space: pre-wrap; word-break: break-word; margin: 6px 0 10px; }
+  .item .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tag { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--line); }
+  details { margin: 0 0 16px; }
+  summary { cursor: pointer; color: var(--accent); margin: 0 0 12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>管理信件</h1>
+  <p class="sub">这个页面的地址别发给别人</p>
+
+  <form class="card" id="login">
+    <div class="field">
+      <label for="pass">管理口令</label>
+      <input type="password" id="pass" autocomplete="current-password">
+    </div>
+    <button type="submit">进去</button>
+    <p class="msg err" id="loginMsg"></p>
+  </form>
+
+  <section id="panel" class="hidden">
+    <details class="card">
+      <summary>写你自己那一封（会排第一）</summary>
+      <form id="own">
+        <div class="field"><label for="ownName">署名</label><input type="text" id="ownName" maxlength="20"></div>
+        <div class="field"><label for="ownQ">回答哪个问题</label><select id="ownQ"></select></div>
+        <div class="field"><label for="ownBody">正文</label><textarea id="ownBody"></textarea></div>
+        <button type="submit">放进去</button>
+        <p class="msg" id="ownMsg"></p>
+      </form>
+    </details>
+
+    <details class="card">
+      <summary>拆封时间</summary>
+      <form id="unseal">
+        <div class="field">
+          <label for="unsealAt">到这个时间，大家打开页面就能看到审过的信（按你手机的时区）</label>
+          <input type="datetime-local" id="unsealAt" style="width:100%;font-size:16px;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)">
+        </div>
+        <button type="submit">保存</button>
+        <p class="msg" id="unsealMsg"></p>
+      </form>
+    </details>
+
+    <div class="row" style="margin:0 0 16px">
+      <span class="count" id="summary"></span>
+      <span style="display:flex;gap:8px">
+        <button class="ghost" id="exportJson">导出 JSON</button>
+        <button class="ghost" id="exportHtml">导出静态页</button>
+      </span>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button class="ghost on" data-f="pending">待审</button>
+      <button class="ghost" data-f="approved">已通过</button>
+      <button class="ghost" data-f="rejected">不放</button>
+      <button class="ghost" data-f="all">全部</button>
+    </div>
+    <div id="list"></div>
+  </section>
+</main>
+
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+(function () {
+  const C = window.WISH_CONFIG, api = window.WishAPI;
+  const $ = (id) => document.getElementById(id);
+  let pass = "", all = [], filter = "pending";
+  const LABEL = { pending: "待审", approved: "已通过", rejected: "不放" };
+
+  try { pass = sessionStorage.getItem("wish_pass") || ""; } catch (e) {}
+
+  [...C.QUESTIONS, C.FREE_QUESTION].forEach((q) => {
+    const o = document.createElement("option"); o.value = o.textContent = q; $("ownQ").appendChild(o);
+  });
+
+  async function refresh() {
+    all = await api.rpc("admin_list", { p_pass: pass });
+    const n = (s) => all.filter((w) => w.status === s).length;
+    $("summary").textContent = `共 ${all.length} 封 · 待审 ${n("pending")} · 通过 ${n("approved")}`;
+    render();
+  }
+
+  function render() {
+    const box = $("list");
+    box.textContent = "";
+    const rows = all.filter((w) => filter === "all" || w.status === filter);
+    if (!rows.length) {
+      const p = document.createElement("p"); p.className = "empty"; p.textContent = "这里没有信"; box.appendChild(p); return;
+    }
+    rows.forEach((w) => {
+      const card = document.createElement("div"); card.className = "card item";
+      const meta = document.createElement("div"); meta.className = "meta";
+      const who = document.createElement("b"); who.textContent = w.nickname || "没署名";
+      const when = document.createElement("span"); when.textContent = api.fmtTime(w.created_at);
+      const tag = document.createElement("span"); tag.className = "tag"; tag.textContent = (w.pinned ? "置顶 · " : "") + LABEL[w.status];
+      meta.append(who, when, tag);
+      const q = document.createElement("div"); q.className = "meta"; q.textContent = w.question;
+      const t = document.createElement("div"); t.className = "text"; t.textContent = w.body;
+      const acts = document.createElement("div"); acts.className = "acts";
+      const mk = (label, fn) => { const b = document.createElement("button"); b.className = "ghost"; b.textContent = label; b.onclick = fn; acts.appendChild(b); };
+      if (w.status !== "approved") mk("通过", () => act("admin_set_status", { p_id: w.id, p_status: "approved" }));
+      if (w.status !== "rejected") mk("不放", () => act("admin_set_status", { p_id: w.id, p_status: "rejected" }));
+      if (w.status !== "pending")  mk("放回待审", () => act("admin_set_status", { p_id: w.id, p_status: "pending" }));
+      mk("删掉", () => { if (confirm("删了就找不回来了，确定？")) act("admin_delete", { p_id: w.id }); });
+      card.append(meta, q, t, acts);
+      box.appendChild(card);
+    });
+  }
+
+  async function act(fn, args) {
+    try { await api.rpc(fn, Object.assign({ p_pass: pass }, args)); await refresh(); }
+    catch (e) { alert(e.message); }
+  }
+
+  async function enter() {
+    try {
+      await refresh();
+      try { sessionStorage.setItem("wish_pass", pass); } catch (e) {}
+      $("login").classList.add("hidden");
+      $("panel").classList.remove("hidden");
+      const s = await api.rpc("wish_status");
+      const d = new Date(s.unseal_at);
+      const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      $("unsealAt").value = local;
+    } catch (e) {
+      $("loginMsg").textContent = e.message;
+      try { sessionStorage.removeItem("wish_pass"); } catch (_) {}
+    }
+  }
+
+  $("login").addEventListener("submit", (e) => { e.preventDefault(); pass = $("pass").value; enter(); });
+  if (pass) enter();
+
+  $("tabs").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    filter = b.dataset.f;
+    [...$("tabs").children].forEach((x) => x.classList.toggle("on", x === b));
+    render();
+  });
+
+  $("own").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const m = $("ownMsg");
+    try {
+      await api.rpc("admin_add_own", { p_pass: pass, p_nickname: $("ownName").value, p_question: $("ownQ").value, p_body: $("ownBody").value });
+      $("ownBody").value = ""; m.className = "msg ok"; m.textContent = "放进去了，排第一"; await refresh();
+    } catch (err) { m.className = "msg err"; m.textContent = err.message; }
+  });
+
+  $("unseal").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const m = $("unsealMsg");
+    if (!$("unsealAt").value) { m.className = "msg err"; m.textContent = "先选个时间"; return; }
+    try {
+      await api.rpc("admin_set_unseal", { p_pass: pass, p_unseal_at: new Date($("unsealAt").value).toISOString() });
+      m.className = "msg ok"; m.textContent = "改好了";
+    } catch (err) { m.className = "msg err"; m.textContent = err.message; }
+  });
+
+  function download(name, text, type) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  const stamp = () => new Date().toISOString().slice(0, 10);
+
+  $("exportJson").onclick = () =>
+    download(`wishes-${stamp()}.json`, JSON.stringify(all.map(({ ip_hash, ...w }) => w), null, 2), "application/json");
+
+  // 导出一份不依赖数据库的静态页：只含已通过的信，自己存着或者到那天单独发
+  $("exportHtml").onclick = async () => {
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const css = await fetch("style.css").then((r) => r.text()).catch(() => "");
+    const rows = all.filter((w) => w.status === "approved")
+      .sort((a, b) => (b.pinned - a.pinned) || (new Date(a.created_at) - new Date(b.created_at)));
+    const letters = rows.map((w) => `
+<div class="env" tabindex="0" onclick="this.classList.add('open')">
+  <div class="env-head"><span class="who">${esc(w.nickname || "没署名的人")}</span><span>${esc(api.fmtTime(w.created_at))}</span></div>
+  <div class="env-body"><p class="env-q">${esc(w.question)}</p><p class="env-text">${esc(w.body)}</p></div>
+</div>`).join("");
+    const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(C.TITLE)}</title>
+<style>${css}</style></head><body><main>
+<h1>${esc(C.TITLE)}</h1><p class="sub">${esc(C.SUBTITLE)}</p>
+${C.HERO_IMAGE ? `<img class="hero" src="${esc(C.HERO_IMAGE)}" alt="">` : ""}
+<p class="status">一共 <b>${rows.length}</b> 封</p>
+<div class="letters">${letters}</div></main></body></html>`;
+    download(`wishes-${stamp()}.html`, html, "text/html");
+  };
+})();
+</script>
+</body>
+</html>

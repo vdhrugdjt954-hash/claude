@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>一百天</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1 id="title"></h1>
+  <p class="sub" id="subtitle"></p>
+  <img class="hero hidden" id="hero" alt="">
+  <p class="status" id="status">正在看攒了几封…</p>
+
+  <!-- 拆开之后才出现 -->
+  <section id="opened" class="hidden">
+    <div class="letters" id="letters"></div>
+    <p class="section-title">还想再写一句的话</p>
+  </section>
+
+  <form class="card" id="form" autocomplete="off">
+    <div class="field">
+      <label for="q">挑一个来答</label>
+      <select id="q"></select>
+    </div>
+    <div class="field">
+      <label for="body">写给<span class="recipient"></span></label>
+      <textarea id="body" placeholder="一两句就好"></textarea>
+      <div class="row"><span></span><span class="count" id="count"></span></div>
+    </div>
+    <div class="field">
+      <label for="name">你的名字</label>
+      <input type="text" id="name" maxlength="20" placeholder="她认得出你的那个称呼">
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="anon"> 不署名</label>
+    </div>
+    <button type="submit" id="send">寄出</button>
+    <p class="msg" id="msg" role="status"></p>
+  </form>
+</main>
+
+<script src="config.js"></script>
+<script src="api.js"></script>
+<script>
+(function () {
+  const C = window.WISH_CONFIG, api = window.WishAPI;
+  const $ = (id) => document.getElementById(id);
+
+  document.title = C.TITLE;
+  $("title").textContent = C.TITLE;
+  $("subtitle").textContent = C.SUBTITLE;
+  document.querySelectorAll(".recipient").forEach((el) => (el.textContent = C.RECIPIENT));
+  if (C.HERO_IMAGE) { $("hero").src = C.HERO_IMAGE; $("hero").classList.remove("hidden"); }
+
+  [...C.QUESTIONS, C.FREE_QUESTION].forEach((q) => {
+    const o = document.createElement("option");
+    o.value = o.textContent = q;
+    $("q").appendChild(o);
+  });
+
+  // 字数
+  const body = $("body"), count = $("count");
+  const len = (s) => [...s.trim()].length;
+  function updateCount() {
+    const n = len(body.value);
+    count.textContent = n + " / " + C.MAX_LEN;
+    count.classList.toggle("over", n > C.MAX_LEN);
+  }
+  body.addEventListener("input", updateCount);
+  updateCount();
+
+  $("anon").addEventListener("change", (e) => { $("name").disabled = e.target.checked; });
+
+  // 状态 + 拆开后的信
+  let unsealAt = null, total = 0, sealed = true;
+  function renderStatus() {
+    const el = $("status");
+    el.textContent = "";
+    if (!unsealAt) return;
+    const b = document.createElement("b");
+    b.textContent = total;
+    if (sealed) {
+      const days = Math.max(0, Math.ceil((unsealAt - Date.now()) / 86400000));
+      el.append("已经攒了 ", b, " 封，" + (days > 0 ? "还有 " + days + " 天" : "就快") + "一起拆开");
+    } else {
+      el.append("一共 ", b, " 封，拆开了");
+    }
+  }
+
+  function letterEl(w) {
+    const btn = document.createElement("div");
+    btn.className = "env";
+    btn.tabIndex = 0;
+    const head = document.createElement("div");
+    head.className = "env-head";
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = w.nickname || "没署名的人";
+    const when = document.createElement("span");
+    when.textContent = api.fmtTime(w.created_at);
+    head.append(who, when);
+
+    const bodyBox = document.createElement("div");
+    bodyBox.className = "env-body";
+    const q = document.createElement("p");
+    q.className = "env-q";
+    q.textContent = w.question;
+    const t = document.createElement("p");
+    t.className = "env-text";
+    t.textContent = w.body; // textContent，不会被当成 HTML
+    bodyBox.append(q, t);
+
+    btn.append(head, bodyBox);
+    const open = () => btn.classList.add("open");
+    btn.addEventListener("click", open);
+    btn.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") open(); });
+    return btn;
+  }
+
+  async function load() {
+    try {
+      const s = await api.rpc("wish_status");
+      unsealAt = new Date(s.unseal_at).getTime();
+      total = s.count;
+      sealed = s.sealed;
+      renderStatus();
+      if (!sealed) {
+        const list = await api.rpc("public_wishes");
+        const box = $("letters");
+        box.textContent = "";
+        if (!list.length) {
+          const p = document.createElement("p");
+          p.className = "empty";
+          p.textContent = "信还在路上";
+          box.appendChild(p);
+        }
+        list.forEach((w) => box.appendChild(letterEl(w)));
+        $("opened").classList.remove("hidden");
+      }
+    } catch (e) {
+      $("status").textContent = "暂时没连上，刷新试试";
+    }
+  }
+  load();
+
+  // 寄出：只有数据库确认收到了才算成功
+  $("form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = $("msg"), send = $("send");
+    msg.className = "msg";
+    msg.textContent = "";
+    const text = body.value.trim();
+    if (!text) { msg.className = "msg err"; msg.textContent = "还没写字呢"; return; }
+    if (len(text) > C.MAX_LEN) { msg.className = "msg err"; msg.textContent = "字有点多，挑最想说的那句"; return; }
+
+    send.disabled = true;
+    send.textContent = "寄送中…";
+    try {
+      const r = await api.rpc("submit_wish", {
+        p_nickname: $("anon").checked ? "" : $("name").value,
+        p_question: $("q").value,
+        p_body: text,
+      });
+      body.value = "";
+      updateCount();
+      msg.className = "msg ok";
+      msg.textContent = "寄出了，" + api.fmtTime(r.created_at) + "。" +
+        (sealed ? "到那天和大家的一起拆开。" : "过一遍之后就会出现在上面。");
+      total += 1;
+      renderStatus();
+    } catch (err) {
+      msg.className = "msg err";
+      msg.textContent = err.message; // 写的字留在框里，不会丢
+    } finally {
+      send.disabled = false;
+      send.textContent = "寄出";
+    }
+  });
+})();
+</script>
+</body>
+</html>
