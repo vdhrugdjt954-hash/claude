@@ -284,21 +284,33 @@ print(r.status_code, r.text)
   });
 
   // ---------- 信 ----------
-  async function load(highlightFirst) {
+  // 读一遍信。第一次全画；之后只有内容变了才重画，新来的那几封闪一下
+  let seen = null, sig = null;
+  const keyOf = (w) => w.created_at + "|" + w.body;
+  async function load(highlightMine) {
     try {
       const [s, list] = await Promise.all([api.rpc("wish_status"), api.rpc("public_wishes")]);
       $("status").textContent = list.length ? "一共 " + s.count + " 封，新的在前面" : "还没人写，你来第一个";
+      const nextSig = list.map(keyOf).join("\n");
+      if (nextSig === sig && !highlightMine) return;
+      const fresh = (w) => seen && !seen.has(keyOf(w));
       const newestIdx = list.findIndex((w) => !w.pinned);
       const box = $("letters");
       box.innerHTML = list
-        .map((w, i) => api.letterHTML(w, i, highlightFirst && i === newestIdx ? "new" : ""))
+        .map((w, i) => api.letterHTML(w, i, (highlightMine && i === newestIdx) || fresh(w) ? "new" : ""))
         .join("");
       api.paintAll(box, list);
+      seen = new Set(list.map(keyOf));
+      sig = nextSig;
     } catch (e) {
-      $("status").textContent = "暂时没连上，刷新试试";
+      if (sig === null) $("status").textContent = "暂时没连上，刷新试试";
     }
   }
   load(false);
+
+  // 自动刷新：页面开着、在前台时，每 30 秒看一眼有没有新信；切回来时也马上看一眼
+  setInterval(() => { if (!document.hidden) load(false); }, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(false); });
 
   // 只有数据库确认收到了才算寄出；成功后从数据库重新读一遍
   $("form").addEventListener("submit", async (e) => {
